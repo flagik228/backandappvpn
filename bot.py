@@ -4,7 +4,7 @@ import asyncio
 import os
 
 BOT_TOKEN = os.getenv("8423828272:AAHGuxxQEvTELPukIXl2eNL3p25fI9GGx0U")  # ⚠️ ОБЯЗАТЕЛЬНО
-PROVIDER_TOKEN = ""  # пусто для Stars да
+PROVIDER_TOKEN = ""  # пусто для Stars
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
