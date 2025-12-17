@@ -20,25 +20,21 @@ async def get_server_by_id(server_id: int):
 
 # активация впн после оплаты
 async def activate_vpn_from_payload(payload: str):
-    _, tg_id, server_id, referrer_tg_id, _ = payload.split(":")  # новый формат
+    _, tg_id, server_id, _ = payload.split(":")
 
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == int(tg_id)))
         if not user:
-            referrer_id = None
-            if referrer_tg_id:
-                ref_user = await session.scalar(select(User).where(User.tg_id == int(referrer_tg_id)))
-                if ref_user:
-                    referrer_id = ref_user.idUser
-
-            user = User(tg_id=int(tg_id), referrer_id=referrer_id)
-            session.add(user)
-            await session.commit()
-            await session.refresh(user)
+            raise ValueError("User not registered")
 
         server = await session.get(ServersVPN, int(server_id))
+        if not server:
+            raise ValueError("Server not found")
+
         api = OutlineAPI(server.api_url)
         key_data = api.create_key("VPN User")
+
+        expires = datetime.utcnow() + timedelta(days=30)
 
         vpn_key = VPNKey(
             idUser=user.idUser,
@@ -46,10 +42,21 @@ async def activate_vpn_from_payload(payload: str):
             provider="outline",
             provider_key_id=key_data["id"],
             access_data=key_data["accessUrl"],
-            expires_at=datetime.utcnow() + timedelta(days=30)
+            expires_at=expires,
+            is_active=True
         )
-
         session.add(vpn_key)
+        await session.flush()
+
+        subscription = VPNSubscription(
+            idUser=user.idUser,
+            vpn_key_id=vpn_key.id,
+            started_at=datetime.utcnow(),
+            expires_at=expires,
+            status="active"
+        )
+        session.add(subscription)
+
         await session.commit()
 
 

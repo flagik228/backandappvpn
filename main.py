@@ -9,8 +9,10 @@ from datetime import datetime, timedelta
 from typing import List
 import uuid
 import os
-from aiogram import Bot
-from aiogram.types import LabeledPrice
+import asyncio
+from aiogram import Bot, Dispatcher
+from aiogram.types import LabeledPrice, Message
+from aiogram.filters import CommandStart
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -27,6 +29,7 @@ async def lifespan(app_: FastAPI):
     yield
 
 app = FastAPI(title="ArtCry VPN", lifespan=lifespan)
+dp = Dispatcher()
 
 app.add_middleware(
     CORSMiddleware,
@@ -81,16 +84,27 @@ class RegisterUser(BaseModel):
 @app.post("/api/register")
 async def register_user(data: RegisterUser):
     async with async_session() as session:
+        # 1️⃣ Проверяем, существует ли пользователь
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if user:
-            return {"status": "exists", "idUser": user.idUser}
-
+            # ❌ Реферер уже есть — больше НИКОГДА не меняем
+            return {
+                "status": "exists",
+                "idUser": user.idUser,
+                "referrer_id": user.referrer_id
+            }
         referrer_id = None
-        if data.referrer_tg_id:
-            ref_user = await session.scalar(select(User).where(User.tg_id == data.referrer_tg_id))
-            if ref_user:
-                referrer_id = ref_user.idUser
 
+        # 2️⃣ Проверка реферера
+        if data.referrer_tg_id:
+            # ❌ Запрет self-ref
+            if data.referrer_tg_id == data.tg_id: referrer_id = None
+            else:
+                ref_user = await session.scalar(select(User).where(User.tg_id == data.referrer_tg_id))
+                if ref_user: referrer_id = ref_user.idUser
+                # ❌ если referrer не найден — игнорируем
+
+        # 3️⃣ Создаём пользователя ТОЛЬКО ОДИН РАЗ
         new_user = User(
             tg_id=data.tg_id,
             userRole=data.userRole,
@@ -100,7 +114,11 @@ async def register_user(data: RegisterUser):
         await session.commit()
         await session.refresh(new_user)
 
-        return {"status": "ok", "idUser": new_user.idUser, "referrer_id": referrer_id}
+        return {
+            "status": "ok",
+            "idUser": new_user.idUser,
+            "referrer_id": referrer_id
+        }
 
 
 # ======================
@@ -130,12 +148,6 @@ async def create_invoice(data: BuyVPN):
     return {"url": invoice_url, "payload": payload}
 
 
-@app.post("/api/vpn/payment-success")
-async def payment_success(payload: str):
-    await rq.activate_vpn_from_payload(payload)
-    return {"status": "ok"}
-
-
 # ======================
 # RENEW VPN
 # ======================
@@ -160,11 +172,6 @@ async def renew_invoice(data: RenewVPN):
 
     return {"url": invoice_url, "payload": payload}
 
-
-@app.post("/api/vpn/renew-success")
-async def renew_success(payload: str):
-    await rq.renew_vpn_from_payload(payload)
-    return {"status": "ok"}
 
 
 # =======================
@@ -471,3 +478,26 @@ async def get_referrals(tg_id: int = Path(..., description="TG ID пользов
         return referrals
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+    
+@dp.message()
+async def handle_successful_payment(message: Message):
+    if not message.successful_payment:
+        return
+
+    payload = message.successful_payment.invoice_payload
+
+    try:
+        if payload.startswith("buy:"):
+            await rq.activate_vpn_from_payload(payload)
+
+        elif payload.startswith("renew:"):
+            await rq.renew_vpn_from_payload(payload)
+
+    except Exception as e:
+        print("PAYMENT ERROR:", e)
+        
+
+@app.on_event("startup")
+async def start_bot():
+    asyncio.create_task(dp.start_polling(bot))
