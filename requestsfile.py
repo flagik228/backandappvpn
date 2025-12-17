@@ -19,6 +19,7 @@ async def get_server_by_id(server_id: int):
         }
 
 
+# активация впн после оплаты
 async def activate_vpn_from_payload(payload: str):
     _, tg_id, server_id, _ = payload.split(":")
 
