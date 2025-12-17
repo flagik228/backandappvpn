@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from models import init_db, async_session, VPNKey
+from models import init_db, async_session, VPNKey, TypesVPN, CountriesVPN, ServersVPN
 from sqlalchemy import select
 import requestsfile as rq
 
@@ -27,6 +27,137 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# --- MODELS REQUESTS ---
+
+class TypeVPNCreate(BaseModel):
+    nameType: str
+    descriptionType: str
+
+class TypeVPNUpdate(BaseModel):
+    nameType: str
+    descriptionType: str
+
+class CountryCreate(BaseModel):
+    nameCountry: str
+
+class CountryUpdate(BaseModel):
+    nameCountry: str
+
+class ServerCreate(BaseModel):
+    nameVPN: str
+    price: int
+    max_conn: int
+    server_ip: str
+    api_url: str
+    api_token: str
+    idTypeVPN: int
+    idCountry: int
+    is_active: bool
+
+class ServerUpdate(ServerCreate):
+    pass
+
+# =======================
+# --- TYPES ADMIN ---
+# =======================
+@app.get("/api/admin/types")
+async def admin_get_types():
+    try:
+        return await rq.admin_get_types()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/types")
+async def admin_add_type(type_data: TypeVPNCreate):
+    try:
+        return await rq.admin_add_type(type_data.nameType, type_data.descriptionType)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.patch("/api/admin/types/{type_id}")
+async def admin_update_type(type_id: int, type_data: TypeVPNUpdate):
+    try:
+        return await rq.admin_update_type(type_id, type_data.nameType, type_data.descriptionType)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/admin/types/{type_id}")
+async def admin_delete_type(type_id: int):
+    try:
+        return await rq.admin_delete_type(type_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# =======================
+# --- COUNTRIES ADMIN ---
+# =======================
+@app.get("/api/admin/countries")
+async def admin_get_countries():
+    try:
+        return await rq.admin_get_countries()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/countries")
+async def admin_add_country(country: CountryCreate):
+    try:
+        return await rq.admin_add_country(country.nameCountry)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.patch("/api/admin/countries/{country_id}")
+async def admin_update_country(country_id: int, country: CountryUpdate):
+    try:
+        return await rq.admin_update_country(country_id, country.nameCountry)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/admin/countries/{country_id}")
+async def admin_delete_country(country_id: int):
+    try:
+        return await rq.admin_delete_country(country_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# =======================
+# --- SERVERS ADMIN ---
+# =======================
+@app.get("/api/admin/servers")
+async def admin_get_servers():
+    try:
+        return await rq.admin_get_servers()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/servers")
+async def admin_add_server(server: ServerCreate):
+    try:
+        return await rq.admin_add_server(server)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/admin/servers/{server_id}")
+async def admin_update_server(server_id: int, server: ServerUpdate):
+    try:
+        return await rq.admin_update_server(server_id, server)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/admin/servers/{server_id}")
+async def admin_delete_server(server_id: int):
+    try:
+        return await rq.admin_delete_server(server_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+
 
 # --- Модели запроса ---
 class VPNInvoiceRequest(BaseModel):
