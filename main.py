@@ -8,7 +8,9 @@ import requestsfile as rq
 from datetime import datetime, timedelta
 from typing import List
 import uuid
-from bot import create_stars_invoice
+import os
+from aiogram import Bot
+from aiogram.types import LabeledPrice
 
 # --- FastAPI приложение ---
 @asynccontextmanager
@@ -26,6 +28,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set")
+
+bot = Bot(BOT_TOKEN)
+
+async def create_stars_invoice(
+    title: str,
+    description: str,
+    payload: str,
+    amount_stars: int
+) -> str:
+    prices = [LabeledPrice(label=title, amount=amount_stars)]
+
+    invoice_link = await bot.create_invoice_link(
+        title=title,
+        description=description,
+        payload=payload,
+        provider_token="",  # Stars → пусто
+        currency="XTR",
+        prices=prices
+    )
+    return invoice_link
+
 
 
 # ======================
