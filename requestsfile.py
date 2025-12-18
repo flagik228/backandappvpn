@@ -1,8 +1,86 @@
 from sqlalchemy import select, update, delete
-from models import async_session, User, VPNKey, VPNSubscription, TypesVPN, CountriesVPN, ServersVPN, ReferralEarning
-from outline_api import OutlineAPI
+from models import (async_session, User, UserWallet, WalletTransaction, VPNKey,
+    VPNSubscription, TypesVPN, CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment
+)
 from typing import List
 from datetime import datetime, timedelta
+from decimal import Decimal
+
+
+# =======================
+# --- USERS ---
+# =======================
+async def add_user(tg_id: int, user_role: str = "user", referrer_id: int | None = None):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if user:
+            return user
+        user = User(
+            tg_id=tg_id,
+            userRole=user_role,
+            referrer_id=referrer_id
+        )
+        session.add(user)
+        await session.flush()
+
+        wallet = UserWallet(user_id=user.idUser, balance_usdt=Decimal("0.00"))
+        session.add(wallet)
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
+async def get_user_wallet(tg_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            return None
+
+        wallet = await session.scalar(select(UserWallet).where(UserWallet.user_id == user.idUser))
+        return {
+            "balance_usdt": str(wallet.balance_usdt)
+        }
+
+# =======================
+# --- REFERRALS ---
+# =======================
+async def get_referrals_count(tg_id: int) -> int:
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            return 0
+        return await session.scalar(
+            select(User).where(User.referrer_id == user.idUser).count()
+        )
+
+
+async def get_referrals_list(tg_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            return []
+
+        referrals = await session.scalars(select(User).where(User.referrer_id == user.idUser))
+        return [{
+            "tg_id": r.tg_id,
+            "created_at": r.created_at.isoformat()
+        } for r in referrals]
+
+# =======================
+# --- SERVERS ---
+# =======================
+async def get_servers() -> List[dict]:
+    async with async_session() as session:
+        servers = await session.scalars(select(ServersVPN).where(ServersVPN.is_active == True))
+        return [{
+            "idServerVPN": s.idServerVPN,
+            "nameVPN": s.nameVPN,
+            "price_usdt": str(s.price_usdt),
+            "max_conn": s.max_conn,
+            "now_conn": s.now_conn,
+            "server_ip": s.server_ip,
+            "api_url": s.api_url
+        } for s in servers]
 
 
 async def get_server_by_id(server_id: int):
@@ -13,292 +91,129 @@ async def get_server_by_id(server_id: int):
         return {
             "idServerVPN": s.idServerVPN,
             "nameVPN": s.nameVPN,
-            "price": s.price,
+            "price_usdt": str(s.price_usdt),
             "api_url": s.api_url
         }
-
-
-# активация впн после оплаты
-async def activate_vpn_from_payload(payload: str):
-    _, tg_id, server_id, _ = payload.split(":")
-
+        
+        
+async def get_servers_full():
     async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == int(tg_id)))
-        if not user:
-            raise ValueError("User not registered")
+        servers = await session.scalars(select(ServersVPN).where(ServersVPN.is_active == True))
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        rate_val = rate.rate if rate else Decimal("1")
 
-        server = await session.get(ServersVPN, int(server_id))
-        if not server:
-            raise ValueError("Server not found")
-
-        api = OutlineAPI(server.api_url)
-        key_data = api.create_key("VPN User")
-
-        expires = datetime.utcnow() + timedelta(days=30)
-
-        vpn_key = VPNKey(
-            idUser=user.idUser,
-            idServerVPN=server.idServerVPN,
-            provider="outline",
-            provider_key_id=key_data["id"],
-            access_data=key_data["accessUrl"],
-            expires_at=expires,
-            is_active=True
-        )
-        session.add(vpn_key)
-        await session.flush()
-
-        subscription = VPNSubscription(
-            idUser=user.idUser,
-            vpn_key_id=vpn_key.id,
-            started_at=datetime.utcnow(),
-            expires_at=expires,
-            status="active"
-        )
-        session.add(subscription)
-
-        await session.commit()
-
-
-async def renew_vpn_from_payload(payload: str):
-    _, tg_id, key_id, months, _ = payload.split(":")
-
-    async with async_session() as session:
-        key = await session.get(VPNKey, int(key_id))
-        key.expires_at += timedelta(days=30 * int(months))
-        await session.commit()
-
-
-# --- Пользователи ---
-async def add_user(tg_id: int, user_role: str, referrer_id: int | None = None):
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        if user:
-            return user
-
-        new_user = User(
-            tg_id=tg_id,
-            userRole=user_role,
-            referrer_id=referrer_id
-        )
-        session.add(new_user)
-        await session.commit()
-        await session.refresh(new_user)
-        return new_user
-    
-# =======================
-# --- REFERRAL SYSTEM ---
-# =======================
-
-async def get_referrals_count(tg_id: int) -> int:
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        if not user:
-            return 0
-        referrals = await session.scalars(select(User).where(User.referrer_id == user.idUser))
-        return len(referrals.all())
-
-async def get_referrals_list(tg_id: int):
-    """
-    Возвращает список приглашённых пользователей с базовой информацией
-    """
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        if not user:
-            return []
-
-        referrals = await session.scalars(select(User).where(User.referrer_id == user.idUser))
         result = []
-        for u in referrals:
+        for s in servers:
+            # Получаем тарифы
+            tariffs_rows = await session.scalars(
+                select(Tariff).where(Tariff.server_id == s.idServerVPN, Tariff.is_active == True)
+            )
+            tariffs_list = []
+            for t in tariffs_rows:
+                tariffs_list.append({
+                    "idTarif": t.idTarif,
+                    "days": t.days,
+                    "price_usdt": str(t.price_tarif),
+                    "price_stars": int(t.price_tarif / rate_val)
+                })
+
+            # Получаем тип VPN и страну
+            type_vpn = await session.get(TypesVPN, s.idTypeVPN)
+            country = await session.get(CountriesVPN, s.idCountry)
+
             result.append({
-                "tg_id": u.tg_id,
-                "created_at": u.created_at.isoformat(),
-                "trial_until": u.trial_until.isoformat() if u.trial_until else None
+                "idServerVPN": s.idServerVPN,
+                "nameVPN": s.nameVPN,
+                "type_vpn": type_vpn.nameType if type_vpn else "",
+                "country": country.nameCountry if country else "",
+                "tariffs": tariffs_list
             })
         return result
 
-
-# --- Серверы VPN ---
-async def get_servers() -> List[dict]:
-    async with async_session() as session:
-        servers = await session.scalars(select(ServersVPN).where(ServersVPN.is_active == True))
-        return [
-            {
-                "idServerVPN": s.idServerVPN,
-                "nameVPN": s.nameVPN,
-                "price": s.price,
-                "max_conn": s.max_conn,
-                "now_conn": s.now_conn,
-                "server_ip": s.server_ip,
-                "api_url": s.api_url
-            } for s in servers
-        ]
-
-
-# --- Список VPN пользователя ---
+# =======================
+# --- USER: MY VPNs ---
+# =======================
 async def get_my_vpns(tg_id: int) -> List[dict]:
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
         if not user:
             return []
 
-        subscriptions = await session.scalars(
-            select(VPNSubscription, VPNKey)
+        rows = await session.execute(select(VPNSubscription, VPNKey, ServersVPN)
             .join(VPNKey, VPNSubscription.vpn_key_id == VPNKey.id)
+            .join(ServersVPN, VPNKey.idServerVPN == ServersVPN.idServerVPN)
             .where(VPNSubscription.idUser == user.idUser)
         )
 
         result = []
-        for sub, key in subscriptions:
+        for sub, key, server in rows:
             result.append({
                 "vpn_key_id": key.id,
-                "server_id": key.idServerVPN,
-                "serverName": (await session.get(ServersVPN, key.idServerVPN)).nameVPN,
+                "server_id": server.idServerVPN,
+                "serverName": server.nameVPN,
                 "access_data": key.access_data,
                 "expires_at": key.expires_at.isoformat(),
-                "is_active": key.is_active
+                "is_active": key.is_active,
+                "status": sub.status
             })
         return result
     
+    
+# =======================
+# --- ADMIN: USERS ---
+# =======================
 
-# --- USERS ADMIN ---
 async def admin_get_users():
     async with async_session() as session:
         users = await session.scalars(select(User))
-        return [{"idUser": u.idUser, "tg_id": u.tg_id, "userRole": u.userRole} for u in users]
+        return [{
+            "idUser": u.idUser,
+            "tg_id": u.tg_id,
+            "userRole": u.userRole,
+            "referrer_id": u.referrer_id
+        } for u in users]
 
-async def admin_add_user(tg_id: int, userRole: str):
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        if user:
-            return {"idUser": user.idUser, "tg_id": user.tg_id, "userRole": user.userRole}
-        new_user = User(tg_id=tg_id, userRole=userRole)
-        session.add(new_user)
-        await session.commit()
-        await session.refresh(new_user)
-        return {"idUser": new_user.idUser, "tg_id": new_user.tg_id, "userRole": new_user.userRole}
 
-async def admin_update_user(user_id: int, tg_id: int, userRole: str):
-    async with async_session() as session:
-        user = await session.get(User, user_id)
-        if not user:
-            raise ValueError("User not found")
-        await session.execute(update(User).where(User.idUser == user_id).values(tg_id=tg_id, userRole=userRole))
-        await session.commit()
-        return {"status": "ok"}
-
-async def admin_delete_user(user_id: int):
-    async with async_session() as session:
-        user = await session.get(User, user_id)
-        if not user:
-            raise ValueError("User not found")
-        await session.delete(user)
-        await session.commit()
-        return {"status": "ok"}
-    
 # =======================
-# --- TYPES VPN ---
+# --- ADMIN: TYPES ---
 # =======================
+
 async def admin_get_types():
     async with async_session() as session:
         types = await session.scalars(select(TypesVPN))
-        return [{"idTypeVPN": t.idTypeVPN, "nameType": t.nameType, "descriptionType": t.descriptionType} for t in types]
+        return [{
+            "idTypeVPN": t.idTypeVPN,
+            "nameType": t.nameType,
+            "descriptionType": t.descriptionType
+        } for t in types]
 
-async def admin_add_type(nameType: str, descriptionType: str):
-    if not nameType or not descriptionType:
-        raise ValueError("nameType и descriptionType не могут быть пустыми")
-
-    async with async_session() as session:
-        t = TypesVPN(nameType=nameType, descriptionType=descriptionType)
-        session.add(t)
-        await session.commit()
-        await session.refresh(t)
-        return {"idTypeVPN": t.idTypeVPN, "nameType": t.nameType, "descriptionType": t.descriptionType}
-
-async def admin_update_type(type_id: int, nameType: str, descriptionType: str):
-    if not nameType or not descriptionType:
-        raise ValueError("nameType и descriptionType не могут быть пустыми")
-
-    async with async_session() as session:
-        type_obj = await session.get(TypesVPN, type_id)
-        if not type_obj:
-            raise ValueError(f"TypeVPN с id {type_id} не найден")
-
-        await session.execute(update(TypesVPN).where(TypesVPN.idTypeVPN == type_id).values(
-            nameType=nameType,
-            descriptionType=descriptionType
-        ))
-        await session.commit()
-        return {"status": "ok"}
-
-async def admin_delete_type(type_id: int):
-    async with async_session() as session:
-        type_obj = await session.get(TypesVPN, type_id)
-        if not type_obj:
-            raise ValueError(f"TypeVPN с id {type_id} не найден")
-
-        await session.delete(type_obj)
-        await session.commit()
-        return {"status": "ok"}
 
 # =======================
-# --- COUNTRIES ---
+# --- ADMIN: COUNTRIES ---
 # =======================
+
 async def admin_get_countries():
     async with async_session() as session:
         countries = await session.scalars(select(CountriesVPN))
-        return [{"idCountry": c.idCountry, "nameCountry": c.nameCountry} for c in countries]
+        return [{
+            "idCountry": c.idCountry,
+            "nameCountry": c.nameCountry
+        } for c in countries]
 
-async def admin_add_country(nameCountry: str):
-    if not nameCountry:
-        raise ValueError("nameCountry не может быть пустым")
-
-    async with async_session() as session:
-        c = CountriesVPN(nameCountry=nameCountry)
-        session.add(c)
-        await session.commit()
-        await session.refresh(c)
-        return {"idCountry": c.idCountry, "nameCountry": c.nameCountry}
-
-async def admin_update_country(country_id: int, nameCountry: str):
-    if not nameCountry:
-        raise ValueError("nameCountry не может быть пустым")
-
-    async with async_session() as session:
-        country_obj = await session.get(CountriesVPN, country_id)
-        if not country_obj:
-            raise ValueError(f"CountryVPN с id {country_id} не найден")
-
-        await session.execute(update(CountriesVPN).where(CountriesVPN.idCountry == country_id).values(
-            nameCountry=nameCountry
-        ))
-        await session.commit()
-        return {"status": "ok"}
-
-async def admin_delete_country(country_id: int):
-    async with async_session() as session:
-        country_obj = await session.get(CountriesVPN, country_id)
-        if not country_obj:
-            raise ValueError(f"CountryVPN с id {country_id} не найден")
-
-        await session.delete(country_obj)
-        await session.commit()
-        return {"status": "ok"}
 
 # =======================
-# --- SERVERS ---
+# --- ADMIN: SERVERS ---
 # =======================
-async def admin_get_servers() -> List[dict]:
+
+async def admin_get_servers():
     async with async_session() as session:
         servers = await session.scalars(select(ServersVPN))
         result = []
         for s in servers:
-            type_obj = await session.get(TypesVPN, s.idTypeVPN)
-            country_obj = await session.get(CountriesVPN, s.idCountry)
             result.append({
                 "idServerVPN": s.idServerVPN,
                 "nameVPN": s.nameVPN,
-                "price": s.price,
+                "price_usdt": str(s.price_usdt),
                 "max_conn": s.max_conn,
                 "now_conn": s.now_conn,
                 "server_ip": s.server_ip,
@@ -306,197 +221,298 @@ async def admin_get_servers() -> List[dict]:
                 "api_token": s.api_token,
                 "is_active": s.is_active,
                 "idTypeVPN": s.idTypeVPN,
-                "idCountry": s.idCountry,
-                "typeName": type_obj.nameType if type_obj else "",
-                "countryName": country_obj.nameCountry if country_obj else ""
+                "idCountry": s.idCountry
             })
         return result
 
-async def admin_add_server(server):
+
+# =========================================================
+# --- ADMIN: TYPES VPN (CRUD)
+# =========================================================
+
+async def admin_add_type(nameType: str, descriptionType: str):
+    if not nameType or not descriptionType:
+        raise ValueError("nameType и descriptionType обязательны")
+
     async with async_session() as session:
-        # проверяем, что idTypeVPN существует
-        type_obj = await session.get(TypesVPN, server.idTypeVPN)
-        if not type_obj:
-            raise ValueError(f"TypeVPN с id {server.idTypeVPN} не найден")
-
-        # проверяем, что idCountry существует
-        country_obj = await session.get(CountriesVPN, server.idCountry)
-        if not country_obj:
-            raise ValueError(f"CountryVPN с id {server.idCountry} не найден")
-
-        s = ServersVPN(
-            nameVPN=server.nameVPN,
-            price=server.price,
-            max_conn=server.max_conn,
-            server_ip=server.server_ip,
-            api_url=server.api_url,
-            api_token=server.api_token,
-            idTypeVPN=server.idTypeVPN,
-            idCountry=server.idCountry,
-            is_active=server.is_active
-        )
-        session.add(s)
+        t = TypesVPN(nameType=nameType, descriptionType=descriptionType)
+        session.add(t)
         await session.commit()
-        await session.refresh(s)
-        return {"idServerVPN": s.idServerVPN, "nameVPN": s.nameVPN}
+        await session.refresh(t)
+        return {
+            "idTypeVPN": t.idTypeVPN,
+            "nameType": t.nameType,
+            "descriptionType": t.descriptionType
+        }
 
-async def admin_update_server(server_id: int, server):
+
+async def admin_update_type(type_id: int, nameType: str, descriptionType: str):
     async with async_session() as session:
-        # проверка существования сервера
-        existing = await session.get(ServersVPN, server_id)
-        if not existing:
-            raise ValueError(f"Сервер с id {server_id} не найден")
+        t = await session.get(TypesVPN, type_id)
+        if not t:
+            raise ValueError("TypeVPN не найден")
 
-        # проверяем TypeVPN
-        type_obj = await session.get(TypesVPN, server.idTypeVPN)
-        if not type_obj:
-            raise ValueError(f"TypeVPN с id {server.idTypeVPN} не найден")
-
-        # проверяем CountryVPN
-        country_obj = await session.get(CountriesVPN, server.idCountry)
-        if not country_obj:
-            raise ValueError(f"CountryVPN с id {server.idCountry} не найден")
-
-        await session.execute(update(ServersVPN).where(ServersVPN.idServerVPN == server_id).values(
-            nameVPN=server.nameVPN,
-            price=server.price,
-            max_conn=server.max_conn,
-            server_ip=server.server_ip,
-            api_url=server.api_url,
-            api_token=server.api_token,
-            idTypeVPN=server.idTypeVPN,
-            idCountry=server.idCountry,
-            is_active=server.is_active
-        ))
+        await session.execute(update(TypesVPN).where(TypesVPN.idTypeVPN == type_id)
+            .values(
+                nameType=nameType,
+                descriptionType=descriptionType
+            )
+        )
         await session.commit()
         return {"status": "ok"}
+
+
+async def admin_delete_type(type_id: int):
+    async with async_session() as session:
+        t = await session.get(TypesVPN, type_id)
+        if not t:
+            raise ValueError("TypeVPN не найден")
+
+        await session.delete(t)
+        await session.commit()
+        return {"status": "ok"}
+
+
+# =========================================================
+# --- ADMIN: COUNTRIES VPN (CRUD)
+# =========================================================
+
+async def admin_add_country(nameCountry: str):
+    if not nameCountry:
+        raise ValueError("nameCountry обязателен")
+
+    async with async_session() as session:
+        c = CountriesVPN(nameCountry=nameCountry)
+        session.add(c)
+        await session.commit()
+        await session.refresh(c)
+        return {
+            "idCountry": c.idCountry,
+            "nameCountry": c.nameCountry
+        }
+
+
+async def admin_update_country(country_id: int, nameCountry: str):
+    async with async_session() as session:
+        c = await session.get(CountriesVPN, country_id)
+        if not c:
+            raise ValueError("CountryVPN не найден")
+
+        await session.execute(update(CountriesVPN).where(CountriesVPN.idCountry == country_id)
+            .values(nameCountry=nameCountry)
+        )
+        await session.commit()
+        return {"status": "ok"}
+
+
+async def admin_delete_country(country_id: int):
+    async with async_session() as session:
+        c = await session.get(CountriesVPN, country_id)
+        if not c:
+            raise ValueError("CountryVPN не найден")
+
+        await session.delete(c)
+        await session.commit()
+        return {"status": "ok"}
+
+
+# =========================================================
+# --- ADMIN: EXCHANGE RATES (CRUD)
+# =========================================================
+
+from models import ExchangeRate
+
+async def admin_get_exchange_rates():
+    async with async_session() as session:
+        rates = await session.scalars(select(ExchangeRate))
+        return [{
+            "id": r.id,
+            "currency": r.currency,
+            "rate_to_usdt": str(r.rate_to_usdt),
+            "updated_at": r.updated_at.isoformat()
+        } for r in rates]
+
+
+async def admin_add_exchange_rate(currency: str, rate_to_usdt: Decimal):
+    async with async_session() as session:
+        rate = ExchangeRate(currency=currency,rate_to_usdt=rate_to_usdt)
+        
+        session.add(rate)
+        await session.commit()
+        await session.refresh(rate)
+        return {
+            "id": rate.id,
+            "currency": rate.currency,
+            "rate_to_usdt": str(rate.rate_to_usdt)
+        }
+
+
+async def admin_update_exchange_rate(rate_id: int, rate_to_usdt: Decimal):
+    async with async_session() as session:
+        rate = await session.get(ExchangeRate, rate_id)
+        if not rate:
+            raise ValueError("ExchangeRate не найден")
+
+        await session.execute(update(ExchangeRate).where(ExchangeRate.id == rate_id)
+            .values(
+                rate_to_usdt=rate_to_usdt,
+                updated_at=datetime.utcnow()
+            )
+        )
+        await session.commit()
+        return {"status": "ok"}
+
+
+async def admin_delete_exchange_rate(rate_id: int):
+    async with async_session() as session:
+        rate = await session.get(ExchangeRate, rate_id)
+        if not rate:
+            raise ValueError("ExchangeRate не найден")
+
+        await session.delete(rate)
+        await session.commit()
+        return {"status": "ok"}
+
+
+# =========================================================
+# --- ADMIN: SERVERS VPN (CRUD)
+# =========================================================
+
+async def admin_add_server(data):
+    async with async_session() as session:
+        server = ServersVPN(
+            nameVPN=data.nameVPN,
+            price_usdt=data.price_usdt,
+            max_conn=data.max_conn,
+            server_ip=data.server_ip,
+            api_url=data.api_url,
+            api_token=data.api_token,
+            idTypeVPN=data.idTypeVPN,
+            idCountry=data.idCountry,
+            is_active=data.is_active
+        )
+        session.add(server)
+        await session.commit()
+        await session.refresh(server)
+        return {
+            "idServerVPN": server.idServerVPN,
+            "nameVPN": server.nameVPN
+        }
+
+
+async def admin_update_server(server_id: int, data):
+    async with async_session() as session:
+        server = await session.get(ServersVPN, server_id)
+        if not server:
+            raise ValueError("ServerVPN не найден")
+
+        await session.execute(update(ServersVPN).where(ServersVPN.idServerVPN == server_id)
+            .values(
+                nameVPN=data.nameVPN,
+                price_usdt=data.price_usdt,
+                max_conn=data.max_conn,
+                server_ip=data.server_ip,
+                api_url=data.api_url,
+                api_token=data.api_token,
+                idTypeVPN=data.idTypeVPN,
+                idCountry=data.idCountry,
+                is_active=data.is_active
+            )
+        )
+        await session.commit()
+        return {"status": "ok"}
+
 
 async def admin_delete_server(server_id: int):
     async with async_session() as session:
-        await session.execute(delete(ServersVPN).where(ServersVPN.idServerVPN == server_id))
+        server = await session.get(ServersVPN, server_id)
+        if not server:
+            raise ValueError("ServerVPN не найден")
+
+        await session.delete(server)
         await session.commit()
         return {"status": "ok"}
     
-
-# --- VPN KEYS ADMIN ---
-async def admin_get_keys():
+# =======================
+# --- GET TARIFFS ---
+# =======================
+async def get_server_tariffs(server_id: int):
     async with async_session() as session:
-        keys = await session.scalars(select(VPNKey))
+        tariffs = await session.scalars(
+            select(Tariff).where(Tariff.server_id == server_id, Tariff.is_active == True)
+        )
         return [{
-            "id": k.id,
-            "idUser": k.idUser,
-            "idServerVPN": k.idServerVPN,
-            "provider": k.provider,
-            "provider_key_id": k.provider_key_id,
-            "access_data": k.access_data,
-            "expires_at": k.expires_at.isoformat(),
-            "is_active": k.is_active
-        } for k in keys]
+            "idTarif": t.idTarif,
+            "days": t.days,
+            "price_usdt": str(t.price_tarif)
+        } for t in tariffs]
+        
 
-async def admin_add_key(key):
+# --- СОЗДАНИЕ ЗАКАЗА ---    
+async def create_order(user_id: int, server_id: int, tariff_id: int, amount_usdt: Decimal, currency: str = "XTR"):
     async with async_session() as session:
-        user = await session.get(User, key.idUser)
-        server = await session.get(ServersVPN, key.idServerVPN)
-        if not user or not server:
-            raise ValueError("User or Server not found")
-        k = VPNKey(**key.dict())
-        session.add(k)
+        order = Order(
+            idUser=user_id,
+            server_id=server_id,
+            amount=int(amount_usdt),
+            currency=currency,
+            status="pending"
+        )
+        session.add(order)
         await session.commit()
-        await session.refresh(k)
-        return {"id": k.id}
-
-async def admin_update_key(key_id: int, key):
+        await session.refresh(order)
+        return {
+            "order_id": order.id,
+            "amount": str(amount_usdt),
+            "currency": currency
+        }
+        
+        
+# --- ОПЛАТА И ПРОДЛЕНИЕ --- 
+async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
     async with async_session() as session:
-        k = await session.get(VPNKey, key_id)
-        if not k:
-            raise ValueError("Key not found")
-        await session.execute(update(VPNKey).where(VPNKey.id == key_id).values(**key.dict()))
+        # Берём тариф
+        tariff = await session.get(Tariff, tariff_id)
+        if not tariff or not tariff.is_active:
+            raise ValueError("Тариф не найден")
+
+        # Ищем существующий ключ пользователя на этом сервере
+        vpn_key = await session.scalar(
+            select(VPNKey)
+            .where(VPNKey.idUser == user_id, VPNKey.idServerVPN == server_id)
+        )
+
+        now = datetime.utcnow()
+        new_expiry = now + timedelta(days=tariff.days)
+
+        if vpn_key:
+            # Продление существующего ключа
+            if vpn_key.expires_at > now:
+                vpn_key.expires_at += timedelta(days=tariff.days)
+            else:
+                vpn_key.expires_at = new_expiry
+        else:
+            # Создаём новый ключ (через OutlineAPI или мок для бэка)
+            from outline_api import OutlineAPI
+            server = await session.get(ServersVPN, server_id)
+            outline = OutlineAPI(server.api_url, server.api_token)
+            key_data = outline.create_key(name=f"VPN User {user_id}")
+            vpn_key = VPNKey(
+                idUser=user_id,
+                idServerVPN=server_id,
+                provider="outline",
+                provider_key_id=key_data["id"],
+                access_data=key_data["accessUrl"],
+                expires_at=new_expiry,
+                is_active=True
+            )
+            session.add(vpn_key)
+
         await session.commit()
-        return {"status": "ok"}
-
-async def admin_delete_key(key_id: int):
-    async with async_session() as session:
-        k = await session.get(VPNKey, key_id)
-        if not k:
-            raise ValueError("Key not found")
-        await session.delete(k)
-        await session.commit()
-        return {"status": "ok"}
-
-# --- VPN SUBSCRIPTIONS ADMIN ---
-async def admin_get_subscriptions():
-    async with async_session() as session:
-        subs = await session.scalars(select(VPNSubscription))
-        return [{
-            "id": s.id,
-            "idUser": s.idUser,
-            "vpn_key_id": s.vpn_key_id,
-            "started_at": s.started_at.isoformat(),
-            "expires_at": s.expires_at.isoformat(),
-            "status": s.status
-        } for s in subs]
-
-async def admin_add_subscription(sub):
-    async with async_session() as session:
-        user = await session.get(User, sub.idUser)
-        key = await session.get(VPNKey, sub.vpn_key_id)
-        if not user or not key:
-            raise ValueError("User or Key not found")
-        s = VPNSubscription(**sub.dict())
-        if not s.started_at:
-            s.started_at = datetime.utcnow()
-        session.add(s)
-        await session.commit()
-        await session.refresh(s)
-        return {"id": s.id}
-
-async def admin_update_subscription(sub_id: int, sub):
-    async with async_session() as session:
-        s = await session.get(VPNSubscription, sub_id)
-        if not s:
-            raise ValueError("Subscription not found")
-        await session.execute(update(VPNSubscription).where(VPNSubscription.id == sub_id).values(**sub.dict()))
-        await session.commit()
-        return {"status": "ok"}
-
-async def admin_delete_subscription(sub_id: int):
-    async with async_session() as session:
-        s = await session.get(VPNSubscription, sub_id)
-        if not s:
-            raise ValueError("Subscription not found")
-        await session.delete(s)
-        await session.commit()
-        return {"status": "ok"}
-
-# --- REFERRAL EARNINGS ADMIN ---
-async def admin_get_referral_earnings():
-    async with async_session() as session:
-        earnings = await session.scalars(select(ReferralEarning))
-        return [{
-            "id": e.id,
-            "referrer_id": e.referrer_id,
-            "referred_id": e.referred_id,
-            "amount": e.amount,
-            "created_at": e.created_at.isoformat()
-        } for e in earnings]
-
-async def admin_add_referral_earning(e):
-    async with async_session() as session:
-        referrer = await session.get(User, e.referrer_id)
-        referred = await session.get(User, e.referred_id)
-        if not referrer or not referred:
-            raise ValueError("Referrer or referred user not found")
-        earning = ReferralEarning(**e.dict())
-        session.add(earning)
-        await session.commit()
-        await session.refresh(earning)
-        return {"id": earning.id}
-
-async def admin_delete_referral_earning(earning_id: int):
-    async with async_session() as session:
-        e = await session.get(ReferralEarning, earning_id)
-        if not e:
-            raise ValueError("Earning not found")
-        await session.delete(e)
-        await session.commit()
-        return {"status": "ok"}
+        await session.refresh(vpn_key)
+        return {
+            "vpn_key_id": vpn_key.id,
+            "server_id": vpn_key.idServerVPN,
+            "access_data": vpn_key.access_data,
+            "expires_at": vpn_key.expires_at.isoformat()
+        }
