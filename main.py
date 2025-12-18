@@ -9,7 +9,7 @@ from sqlalchemy import select, update, delete
 from datetime import datetime, timedelta
 
 import requestsfile as rq
-from models import init_db, async_session, User, ExchangeRate, Tariff
+from models import init_db, async_session, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet
 
 # ======================
 # APP
@@ -104,7 +104,7 @@ class CountryCreate(BaseModel):
 
 class ServerCreate(BaseModel):
     nameVPN: str
-    price_usdt: str
+    price_usdt: Decimal
     max_conn: int
     server_ip: str
     api_url: str
@@ -263,82 +263,46 @@ async def admin_delete_tariff(tariff_id: int):
 # ADMIN: ExchangeRate
 # ======================
 class ExchangeRateCreate(BaseModel):
-    pair: str
     rate: Decimal
-
-class ExchangeRateUpdate(ExchangeRateCreate):
-    pass
-
-@app.get("/api/admin/exchange-rates")
-async def admin_get_exchange_rates():
-    async with async_session() as session:
-        rates = await session.scalars(select(ExchangeRate))
-        return [{
-            "id": r.id,
-            "pair": r.pair,
-            "rate": str(r.rate),
-            "updated_at": r.updated_at.isoformat()
-        } for r in rates]
-
-@app.post("/api/admin/exchange-rates")
-async def admin_add_exchange_rate(data: ExchangeRateCreate):
-    async with async_session() as session:
-        rate = ExchangeRate(pair=data.pair, rate=data.rate)
-        session.add(rate)
-        await session.commit()
-        await session.refresh(rate)
-        return {
-            "id": rate.id,
-            "pair": rate.pair,
-            "rate": str(rate.rate)
-        }
-
-@app.patch("/api/admin/exchange-rates/{rate_id}")
-async def admin_update_exchange_rate(rate_id: int, data: ExchangeRateUpdate):
-    async with async_session() as session:
-        rate = await session.get(ExchangeRate, rate_id)
-        if not rate:
-            raise HTTPException(status_code=404, detail="ExchangeRate not found")
-        await session.execute(update(ExchangeRate).where(ExchangeRate.id == rate_id).values(
-            pair=data.pair,
-            rate=data.rate,
-            updated_at=datetime.utcnow()
-        ))
-        await session.commit()
-        return {"status": "ok"}
-
-@app.delete("/api/admin/exchange-rates/{rate_id}")
-async def admin_delete_exchange_rate(rate_id: int):
-    async with async_session() as session:
-        rate = await session.get(ExchangeRate, rate_id)
-        if not rate:
-            raise HTTPException(status_code=404, detail="ExchangeRate not found")
-        await session.delete(rate)
-        await session.commit()
-        return {"status": "ok"}
     
-    
-# ======================
-# ADMIN: EXCHANGE RATE (для получения страны и типа впн в страницу с серверами)
-# ======================
-
-from fastapi import HTTPException
-from decimal import Decimal
-import requestsfile as rq
-
-@app.get("/api/admin/exchange-rate/XTR_USDT")
-async def get_xtr_rate():
-    # Берём курс из таблицы ExchangeRate
+@app.get("/api/admin/exchange-rate/{pair}")
+async def get_exchange_rate(pair: str):
     async with async_session() as session:
         rate = await session.scalar(
-            select(rq.ExchangeRate).where(rq.ExchangeRate.pair == "XTR_USDT")
+            select(ExchangeRate).where(ExchangeRate.pair == pair)
         )
         if not rate:
-            raise HTTPException(status_code=404, detail="Exchange rate XTR_USDT not found")
+            return None
+
         return {
             "pair": rate.pair,
-            "rate": float(rate.rate),  # или str(rate.rate) если нужно точное Decimal
+            "rate": float(rate.rate),
             "updated_at": rate.updated_at.isoformat()
+        }
+
+
+@app.patch("/api/admin/exchange-rate/{pair}")
+async def set_exchange_rate(pair: str, data: ExchangeRateCreate):
+    async with async_session() as session:
+        rate = await session.scalar(
+            select(ExchangeRate).where(ExchangeRate.pair == pair)
+        )
+
+        if rate is None:
+            rate = ExchangeRate(
+                pair=pair,
+                rate=data.rate
+            )
+            session.add(rate)
+        else:
+            rate.rate = data.rate
+            rate.updated_at = datetime.utcnow()
+
+        await session.commit()
+
+        return {
+            "pair": pair,
+            "rate": float(rate.rate)
         }
 
 
@@ -398,14 +362,59 @@ async def create_order_endpoint(data: OrderRequest):
         return await rq.create_order(user.idUser, data.server_id, data.tariff_id, Decimal(amount_stars), currency="XTR")
     
     
-# --- Оплата и продление VPN --- 
-@app.post("/api/vpn/pay")
-async def pay_vpn(data: OrderRequest):
+    
+class VPNPayRequest(BaseModel):
+    tg_id: int
+    tariff_id: int
+    
+@app.post("/api/vpn/create_invoice")
+async def create_invoice(data: VPNPayRequest):
     async with async_session() as session:
+        # 1) Проверка пользователя
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        try:
-            return await rq.pay_and_extend_vpn(user.idUser, data.server_id, data.tariff_id)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(404, "User not found")
+
+        # 2) Тариф
+        tariff = await session.scalar(select(Tariff).where(Tariff.idTarif == data.tariff_id))
+        if not tariff or not tariff.is_active:
+            raise HTTPException(404, "Tariff not found")
+
+        # 3) Сервер
+        server = await session.scalar(select(ServersVPN).where(ServersVPN.idServerVPN == tariff.server_id))
+        if not server:
+            raise HTTPException(404, "Server not found")
+
+        # 4) Курс
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        if not rate:
+            raise HTTPException(400, "Exchange rate not set")
+
+        # 5) Расчёт Stars
+        price_usdt = Decimal(tariff.price_tarif)
+        rate_usdt = Decimal(rate.rate)
+        stars_price = int(price_usdt / rate_usdt)
+        if stars_price < 1:
+            stars_price = 1
+
+        # 6) Создаём Order
+        order = Order(
+            idUser=user.idUser,
+            server_id=server.idServerVPN,
+            amount=stars_price,
+            currency="XTR",
+            status="pending"
+        )
+        session.add(order)
+        await session.flush()
+        await session.commit()
+
+        # 7) Возврат данных для фронта
+        return {
+            "order_id": order.idOrder,
+            "title": f"VPN {tariff.days} дней",
+            "description": f"{server.nameVPN}",
+            "payload": f"vpn:{order.idOrder}",
+            "currency": "XTR",
+            "prices": [{"label": f"{tariff.days} дней VPN", "amount": stars_price}]
+        }

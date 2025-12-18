@@ -87,7 +87,7 @@ class Tariff(Base):
     __tablename__ = "tariffs"
 
     idTarif: Mapped[int] = mapped_column(primary_key=True)
-    server_id: Mapped[int] = mapped_column(ForeignKey("serversvpn.idServerVPN", ondelete="CASCADE"))
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN", ondelete="CASCADE"))
     days: Mapped[int] = mapped_column(Integer)  # 1, 7, 14, 30
     price_tarif: Mapped[Decimal] = mapped_column(Numeric(18, 6))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

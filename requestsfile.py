@@ -5,6 +5,7 @@ from models import (async_session, User, UserWallet, WalletTransaction, VPNKey,
 from typing import List
 from datetime import datetime, timedelta
 from decimal import Decimal
+from sqlalchemy import func
 
 
 # =======================
@@ -46,12 +47,18 @@ async def get_user_wallet(tg_id: int):
 # =======================
 async def get_referrals_count(tg_id: int) -> int:
     async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        user = await session.scalar(
+            select(User).where(User.tg_id == tg_id)
+        )
         if not user:
             return 0
-        return await session.scalar(
-            select(User).where(User.referrer_id == user.idUser).count()
+
+        count = await session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(User.referrer_id == user.idUser)
         )
+        return count or 0
 
 
 async def get_referrals_list(tg_id: int):
