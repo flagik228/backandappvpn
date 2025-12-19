@@ -1,48 +1,53 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import LabeledPrice
 from models import async_session, Order, VPNKey, User, ServersVPN
 from datetime import datetime, timedelta
-from sqlalchemy import select, update, delete
+from sqlalchemy import select
 
 BOT_TOKEN = "8423828272:AAHGuxxQEvTELPukIXl2eNL3p25fI9GGx0U"
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+async def remove_webhook():
+    bot = Bot(BOT_TOKEN)
+    await bot.delete_webhook()
+    await bot.session.close()
+
+asyncio.run(remove_webhook())
+
+dp = Dispatcher()
 
 
-# Подтверждаем pre_checkout
-@dp.pre_checkout_query_handler(lambda q: True)
+# --- PreCheckoutQuery ---
 async def pre_checkout_handler(q: types.PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(q.id, ok=True)
+    await q.answer(ok=True)
+
+dp.pre_checkout_query.register(pre_checkout_handler)
 
 
-# После успешной оплаты
-@dp.message_handler(content_types=types.ContentType.SUCCESSFUL_PAYMENT)
+# --- Успешная оплата ---
 async def successful_payment_handler(message: types.Message):
+    # Проверяем, что это именно успешная оплата
+    if not message.successful_payment:
+        return
+
     payload = message.successful_payment.invoice_payload  # "vpn:<order_id>"
     order_id = int(payload.split(":")[1])
 
     async with async_session() as session:
-        # 1) Получаем заказ
         order = await session.get(Order, order_id)
         if not order:
             await message.reply("Заказ не найден")
             return
 
-        # 2) Проверяем пользователя
         user = await session.get(User, order.idUser)
         if not user:
             await message.reply("Пользователь не найден")
             return
 
-        # 3) Сервер
         server = await session.get(ServersVPN, order.server_id)
         if not server:
             await message.reply("Сервер не найден")
             return
 
-        # 4) Создаём или продлеваем VPNKey
         now = datetime.utcnow()
         vpn_key = await session.scalar(
             select(VPNKey).where(
@@ -69,7 +74,6 @@ async def successful_payment_handler(message: types.Message):
             )
             session.add(vpn_key)
 
-        # 5) Завершаем заказ
         order.status = "completed"
         session.add(order)
         await session.commit()
@@ -77,7 +81,15 @@ async def successful_payment_handler(message: types.Message):
         await message.reply(f"Оплата получена! VPN активирован до {vpn_key.expires_at.strftime('%d.%m.%Y')}")
 
 
+# --- Регистрируем хендлер через фильтр lambda ---
+dp.message.register(successful_payment_handler, lambda msg: msg.successful_payment is not None)
+
+
+# --- Главная функция ---
+async def main():
+    print("Бот запущен")
+    await dp.start_polling(bot)
+
+
 if __name__ == "__main__":
-    import asyncio
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
