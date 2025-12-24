@@ -1,5 +1,9 @@
 import requests
 from typing import Optional, List, Dict
+import urllib3
+
+# Отключаем предупреждения о self-signed SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class OutlineAPI:
@@ -30,7 +34,8 @@ class OutlineAPI:
             url=url,
             json=data,
             headers=headers,
-            timeout=10
+            timeout=10,
+            verify=False
         )
 
         response.raise_for_status()

@@ -13,6 +13,7 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 
 import requestsfile as rq
+from requestsfile import create_vpn_for_user, create_order, pay_and_extend_vpn
 from models import init_db, async_session, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet
 
 
@@ -76,44 +77,28 @@ async def successful_payment(message: Message):
         if not order or order.status != "pending":
             return
 
-        user = await session.get(User, order.idUser)
-        server = await session.get(ServersVPN, order.server_id)
-        tariff = await session.get(Tariff, order.tariff_id)
+        user_id = order.idUser
+        server_id = order.server_id
+        tariff_id = order.idTarif
 
-        now = datetime.utcnow()
+        # Создаём VPN через OutlineAPI
+        try:
+            vpn_data = await create_vpn_for_user(user_id, server_id, tariff_id)
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при создании VPN ключа: {e}")
+            return
 
-        vpn_key = await session.scalar(
-            select(VPNKey).where(
-                VPNKey.idUser == user.idUser,
-                VPNKey.idServerVPN == server.idServerVPN
-            )
-        )
-
-        if vpn_key:
-            if vpn_key.expires_at and vpn_key.expires_at > now:
-                vpn_key.expires_at += timedelta(days=tariff.days)
-            else:
-                vpn_key.expires_at = now + timedelta(days=tariff.days)
-            vpn_key.is_active = True
-        else:
-            vpn_key = VPNKey(
-                idUser=user.idUser,
-                idServerVPN=server.idServerVPN,
-                provider="local",
-                access_data="generated_access_data",
-                created_at=now,
-                expires_at=now + timedelta(days=tariff.days),
-                is_active=True
-            )
-            session.add(vpn_key)
-
+        # Обновляем статус заказа
         order.status = "completed"
         await session.commit()
 
+        # Информируем пользователя
+        server = await session.get(ServersVPN, server_id)
         await message.answer(
-            f"✅ VPN активирован\n"
+            f"✅ VPN активирован!\n"
             f"Сервер: {server.nameVPN}\n"
-            f"Действует до: {vpn_key.expires_at.strftime('%d.%m.%Y')}"
+            f"Действует до: {vpn_data['expires_at']}\n"
+            f"Ваш ключ: {vpn_data['access_data']}"
         )
 
 # ======================
@@ -127,50 +112,154 @@ class CreateInvoiceRequest(BaseModel):
 @app.post("/api/vpn/create_invoice")
 async def create_invoice(data: CreateInvoiceRequest):
     async with async_session() as session:
+        # 1) Проверка пользователя
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if not user:
-            raise HTTPException(404, "User not found")
+            raise HTTPException(status_code=404, detail="User not found")
 
-        tariff = await session.get(Tariff, data.tariff_id)
+        # 2) Тариф
+        tariff = await session.scalar(select(Tariff).where(Tariff.idTarif == data.tariff_id))
         if not tariff or not tariff.is_active:
-            raise HTTPException(404, "Tariff not found")
+            raise HTTPException(status_code=404, detail="Tariff not found")
 
-        server = await session.get(ServersVPN, tariff.server_id)
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT")
-        )
+        # 3) Сервер
+        server = await session.scalar(select(ServersVPN).where(ServersVPN.idServerVPN == tariff.server_id))
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
+
+        # 4) Курс XTR/USDT
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         if not rate:
-            raise HTTPException(400, "Exchange rate not set")
+            raise HTTPException(status_code=400, detail="Exchange rate not set")
 
-        stars = int(Decimal(tariff.price_tarif) / Decimal(rate.rate))
-        stars = max(stars, 1)
+        # 5) Расчёт Stars
+        price_usdt = Decimal(tariff.price_tarif)
+        rate_usdt = Decimal(rate.rate)
+        stars_price = int(price_usdt / rate_usdt)
+        if stars_price < 1:
+            stars_price = 1
 
+        # 6) Создаём Order и добавляем в сессию
         order = Order(
             idUser=user.idUser,
             server_id=server.idServerVPN,
-            tariff_id=tariff.idTarif,
-            amount=stars,
+            idTarif=tariff.idTarif,  # ← добавляем тариф
+            amount=stars_price,
             currency="XTR",
             status="pending"
         )
         session.add(order)
-        await session.flush()
-
+        await session.flush()  # присвоит order.idOrder
+        await session.commit() # сохранение окончательно
+        
+        # 7) Возврат данных для фронта (Telegram Mini App)
+        
         invoice_link = await bot(
             CreateInvoiceLink(
                 title=f"VPN {tariff.days} дней",
                 description=server.nameVPN,
-                payload=f"vpn:{order.idOrder}",
+                payload=f"vpn:{order.id}",
                 currency="XTR",
-                prices=[LabeledPrice(label="VPN", amount=stars)]
+                prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)]
             )
         )
 
+        return {"invoice_link": invoice_link}  # <- просто строка
+
+
+
+# -------- ПРОДЛЕНИЕ
+
+class RenewInvoiceRequest(BaseModel):
+    tg_id: int
+    vpn_key_id: int
+    months: int  # количество месяцев для продления
+
+@app.post("/api/vpn/renew-invoice")
+async def renew_invoice(data: RenewInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        vpn_key = await session.get(VPNKey, data.vpn_key_id)
+        if not vpn_key:
+            raise HTTPException(status_code=404, detail="VPN key not found")
+
+        server = await session.get(ServersVPN, vpn_key.idServerVPN)
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
+
+        # Берём тариф на выбранное количество месяцев (предположим 30 дней в месяц)
+        tariff_days = 30 * data.months
+
+        # Рассчитываем цену по тарифу
+        # Берём тариф с серверов, возьмем минимальную цену за 30 дней
+        tariff = await session.scalar(select(Tariff).where(Tariff.server_id == server.idServerVPN, Tariff.is_active == True))
+        if not tariff:
+            raise HTTPException(status_code=404, detail="Tariff not found")
+
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        if not rate:
+            raise HTTPException(status_code=500, detail="Exchange rate not set")
+
+        price_usdt = Decimal(tariff.price_tarif) * data.months
+        stars_price = int(price_usdt / rate.rate)
+        if stars_price < 1:
+            stars_price = 1
+
+        # Создаём Order для продления
+        order = Order(
+            idUser=user.idUser,
+            server_id=server.idServerVPN,
+            idTarif=tariff.idTarif,
+            amount=stars_price,
+            currency="XTR",
+            status="pending"
+        )
+        session.add(order)
+        await session.commit()
+        await session.refresh(order)
+
+        # Создаём invoice через Telegram
+        from aiogram.methods import CreateInvoiceLink
+        invoice_link = await bot(
+            CreateInvoiceLink(
+                title=f"Продление VPN {data.months} мес.",
+                description=server.nameVPN,
+                payload=f"renew:{order.id}",
+                currency="XTR",
+                prices=[{"label": f"{data.months} мес. VPN", "amount": stars_price}]
+            )
+        )
+
+        return {
+            "invoice": invoice_link,
+            "payload": f"renew:{order.id}"
+        }
+        
+        
+# подтверждение оплаты продления
+@app.post("/api/vpn/renew-success")
+async def renew_success(payload: str):
+    # payload = renew:<order_id>
+    try:
+        order_id = int(payload.split(":")[1])
+    except:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    async with async_session() as session:
+        order = await session.get(Order, order_id)
+        if not order or order.status != "pending":
+            raise HTTPException(status_code=404, detail="Order not found or already processed")
+
+        # Продлеваем VPN
+        result = await pay_and_extend_vpn(order.idUser, order.server_id, order.idTarif)
+
+        order.status = "completed"
         await session.commit()
 
-        return {"invoice_link": invoice_link}
-
-
+        return {"status": "ok", "vpn_key": result}
 
 
 
@@ -510,56 +599,3 @@ class VPNPayRequest(BaseModel):
     tg_id: int
     tariff_id: int
     
-"""
-@app.post("/api/vpn/create_invoice")
-async def create_invoice(data: VPNPayRequest):
-    async with async_session() as session:
-        # 1) Проверка пользователя
-        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
-        if not user:
-            raise HTTPException(404, "User not found")
-
-        # 2) Тариф
-        tariff = await session.scalar(select(Tariff).where(Tariff.idTarif == data.tariff_id))
-        if not tariff or not tariff.is_active:
-            raise HTTPException(404, "Tariff not found")
-
-        # 3) Сервер
-        server = await session.scalar(select(ServersVPN).where(ServersVPN.idServerVPN == tariff.server_id))
-        if not server:
-            raise HTTPException(404, "Server not found")
-
-        # 4) Курс
-        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
-        if not rate:
-            raise HTTPException(400, "Exchange rate not set")
-
-        # 5) Расчёт Stars
-        price_usdt = Decimal(tariff.price_tarif)
-        rate_usdt = Decimal(rate.rate)
-        stars_price = int(price_usdt / rate_usdt)
-        if stars_price < 1:
-            stars_price = 1
-
-        # 6) Создаём Order
-        order = Order(
-            idUser=user.idUser,
-            server_id=server.idServerVPN,
-            amount=stars_price,
-            currency="XTR",
-            status="pending"
-        )
-        session.add(order)
-        await session.flush()
-        await session.commit()
-
-        # 7) Возврат данных для фронта
-        return {
-            "order_id": order.idOrder,
-            "title": f"VPN {tariff.days} дней",
-            "description": f"{server.nameVPN}",
-            "payload": f"vpn:{order.idOrder}",
-            "currency": "XTR",
-            "prices": [{"label": f"{tariff.days} дней VPN", "amount": stars_price}]
-        }
-"""

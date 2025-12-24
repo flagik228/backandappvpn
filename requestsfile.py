@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from sqlalchemy import func
 
+from outline_api import OutlineAPI
+
 
 # =======================
 # --- USERS ---
@@ -136,6 +138,72 @@ async def get_servers_full():
                 "tariffs": tariffs_list
             })
         return result
+
+
+# =======================
+# --- СОЗДАНИЕ КЛЮЧА, УСПЕШНАЯ ОПЛАТА
+# =======================
+async def create_vpn_for_user(user_id: int, server_id: int, tariff_id: int):
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        server = await session.get(ServersVPN, server_id)
+        if not server:
+            raise ValueError("Server not found")
+
+        tariff = await session.get(Tariff, tariff_id)
+        if not tariff or not tariff.is_active:
+            raise ValueError("Tariff not found")
+
+        # Создаём ключ через OutlineAPI
+        outline = OutlineAPI(server.api_url, server.api_token)
+        key_data = outline.create_key(name=f"VPN User {user_id}")
+
+        now = datetime.utcnow()
+        expires_at = now + timedelta(days=tariff.days)
+
+        # Сохраняем VPNKey
+        vpn_key = VPNKey(
+            idUser=user_id,
+            idServerVPN=server_id,
+            provider="outline",
+            provider_key_id=key_data["id"],
+            access_data=key_data.get("accessUrl") or key_data.get("access_url") or key_data["id"],
+            created_at=now,
+            expires_at=expires_at,
+            is_active=True
+        )
+        session.add(vpn_key)
+        await session.flush()  # присвоит vpn_key.id
+
+        # Создаём подписку
+        vpn_sub = VPNSubscription(
+            idUser=user_id,
+            vpn_key_id=vpn_key.id,
+            started_at=now,
+            expires_at=expires_at,
+            status="active"
+        )
+        session.add(vpn_sub)
+
+        await session.commit()
+        await session.refresh(vpn_key)
+        await session.refresh(vpn_sub)
+
+        return {
+            "vpn_key_id": vpn_key.id,
+            "access_data": vpn_key.access_data,
+            "expires_at": vpn_key.expires_at.isoformat(),
+            "subscription_id": vpn_sub.id
+        }
+
+
+
+
+
+
 
 # =======================
 # --- USER: MY VPNs ---
@@ -461,6 +529,7 @@ async def create_order(user_id: int, server_id: int, tariff_id: int, amount_usdt
         order = Order(
             idUser=user_id,
             server_id=server_id,
+            idTarif=tariff_id,
             amount=int(amount_usdt),
             currency=currency,
             status="pending"
@@ -471,19 +540,18 @@ async def create_order(user_id: int, server_id: int, tariff_id: int, amount_usdt
         return {
             "order_id": order.id,
             "amount": str(amount_usdt),
-            "currency": currency
+            "currency": currency,
+            "idTarif": tariff_id
         }
         
         
 # --- ОПЛАТА И ПРОДЛЕНИЕ --- 
 async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
     async with async_session() as session:
-        # Берём тариф
         tariff = await session.get(Tariff, tariff_id)
         if not tariff or not tariff.is_active:
             raise ValueError("Тариф не найден")
 
-        # Ищем существующий ключ пользователя на этом сервере
         vpn_key = await session.scalar(
             select(VPNKey)
             .where(VPNKey.idUser == user_id, VPNKey.idServerVPN == server_id)
@@ -493,14 +561,11 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
         new_expiry = now + timedelta(days=tariff.days)
 
         if vpn_key:
-            # Продление существующего ключа
             if vpn_key.expires_at > now:
                 vpn_key.expires_at += timedelta(days=tariff.days)
             else:
                 vpn_key.expires_at = new_expiry
         else:
-            # Создаём новый ключ (через OutlineAPI или мок для бэка)
-            from outline_api import OutlineAPI
             server = await session.get(ServersVPN, server_id)
             outline = OutlineAPI(server.api_url, server.api_token)
             key_data = outline.create_key(name=f"VPN User {user_id}")
