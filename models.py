@@ -5,9 +5,23 @@ from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import Column, Integer, ForeignKey, Numeric, Boolean
 from sqlalchemy.orm import relationship
+from dotenv import load_dotenv
+import os
 
 
-engine = create_async_engine(url='sqlite+aiosqlite:///db.sqlite3', echo = True)
+load_dotenv()  # читаем .env
+
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
+
+DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+engine = create_async_engine(url=DATABASE_URL, echo=True)
+
+# engine = create_async_engine(url='postgresql+asyncpg://vpn_user:Korga_2000@localhost:5432/vpn_base', echo = True)
 
 async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
 
@@ -22,7 +36,7 @@ class User(Base):
     tg_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     userRole: Mapped[str] = mapped_column(String(100), default="user")
     referrer_id: Mapped[int | None] = mapped_column(ForeignKey("users.idUser"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     
     
     # внутрений баланс пользователя
@@ -32,7 +46,7 @@ class UserWallet(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"),unique=True)
     balance_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0.0"))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     
     
     # история транзакций баланса
@@ -46,7 +60,7 @@ class WalletTransaction(Base):
     type: Mapped[str] = mapped_column(String(100))  # referral / deposit / withdrawal
 
     description: Mapped[str] = mapped_column(String(300), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     # категории VPN
 class TypesVPN(Base):
@@ -101,7 +115,7 @@ class ExchangeRate(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     pair: Mapped[str] = mapped_column(String(50), unique=True)  # "XTR_USDT"
     rate: Mapped[Decimal] = mapped_column(Numeric(18, 8))   # 0.01301886
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     
     
     # заказы
@@ -115,7 +129,7 @@ class Order(Base):
     amount: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(10))  # XTR / USDT
     status: Mapped[str] = mapped_column(String(30), default="pending")  # pending / paid / failed
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
     # оплата заказа
@@ -129,7 +143,7 @@ class Payment(Base):
 
     provider_payment_id: Mapped[str] = mapped_column(String(200))   # ID платежа у платёжного провайдера.
     status: Mapped[str] = mapped_column(String(30))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
     # VPN KEYS
@@ -143,8 +157,8 @@ class VPNKey(Base):
     provider_key_id: Mapped[str] = mapped_column(String(200))
     access_data: Mapped[str] = mapped_column(String(500))
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
@@ -155,8 +169,8 @@ class VPNSubscription(Base):
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser"))
     vpn_key_id: Mapped[int] = mapped_column(ForeignKey("vpn_keys.id"))
 
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     status: Mapped[str] = mapped_column(String(30), default="active")
 
 
@@ -167,7 +181,7 @@ class ReferralConfig(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     percent: Mapped[int] = mapped_column(Integer)  # 5 = 5%
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     # реферальные начисления
 class ReferralEarning(Base):
@@ -179,7 +193,7 @@ class ReferralEarning(Base):
     percent: Mapped[int] = mapped_column(Integer)
     amount_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6))
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     
 async def init_db():
     async with engine.begin() as conn:
