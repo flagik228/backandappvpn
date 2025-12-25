@@ -13,7 +13,7 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 
 import requestsfile as rq
-from requestsfile import create_vpn_for_user, create_order, pay_and_extend_vpn, create_vpn_xui
+from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui
 from models import init_db, async_session, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet
 
 

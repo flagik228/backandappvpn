@@ -8,7 +8,7 @@ class XUIApi:
     def __init__(self, api_url: str, username: str, password: str):
         self.api_url = api_url.rstrip("/")
         self.auth = (username, password)
-        self.client = httpx.AsyncClient(auth=self.auth, timeout=10)
+        self.client = httpx.AsyncClient(auth=self.auth, timeout=10, verify=False)
 
     # ====== INBOUND ======
     async def get_inbounds(self):
