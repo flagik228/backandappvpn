@@ -13,7 +13,7 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 
 import requestsfile as rq
-from requestsfile import create_vpn_for_user, create_order, pay_and_extend_vpn
+from requestsfile import create_vpn_for_user, create_order, pay_and_extend_vpn, create_vpn_xui
 from models import init_db, async_session, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet
 
 
@@ -80,10 +80,16 @@ async def successful_payment(message: Message):
         user_id = order.idUser
         server_id = order.server_id
         tariff_id = order.idTarif
+        
+        tariff = await session.get(Tariff, tariff_id)
+        if not tariff:
+            await message.answer("❌ Тариф не найден")
+            return
 
         # Создаём VPN через OutlineAPI
         try:
-            vpn_data = await create_vpn_for_user(user_id, server_id, tariff_id)
+            vpn_data = await create_vpn_xui(user_id, server_id, tariff.days)
+            # vpn_data = await create_vpn_for_user(user_id, server_id, tariff_id)
         except Exception as e:
             await message.answer(f"❌ Ошибка при создании VPN ключа: {e}")
             return
@@ -101,7 +107,6 @@ async def successful_payment(message: Message):
             f"Ваш ключ: {vpn_data['access_data']}"
         )
 
-# ======================
 # API
 # ======================
 
@@ -340,6 +345,9 @@ class ServerCreate(BaseModel):
     server_ip: str
     api_url: str
     api_token: str
+    xui_username: str
+    xui_password: str
+    inbound_port: int
     idTypeVPN: int
     idCountry: int
     is_active: bool

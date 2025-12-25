@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from sqlalchemy import func
 
-from outline_api import OutlineAPI
+# from outline_api import OutlineAPI
+from xui_api import XUIApi
 
 
 # =======================
@@ -98,10 +99,13 @@ async def get_server_by_id(server_id: int):
         if not s:
             return None
         return {
-            "idServerVPN": s.idServerVPN,
-            "nameVPN": s.nameVPN,
-            "price_usdt": str(s.price_usdt),
-            "api_url": s.api_url
+        "idServerVPN": s.idServerVPN,
+        "nameVPN": s.nameVPN,
+        "price_usdt": str(s.price_usdt),
+        "api_url": s.api_url,
+        "xui_username": s.xui_username,
+        "xui_password": s.xui_password,
+        "inbound_port": s.inbound_port
         }
         
         
@@ -143,6 +147,62 @@ async def get_servers_full():
 # =======================
 # --- СОЗДАНИЕ КЛЮЧА, УСПЕШНАЯ ОПЛАТА
 # =======================
+
+async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        server = await session.get(ServersVPN, server_id)
+
+        xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
+        inbound = await xui.get_inbounds()
+        inbound_port = inbound['data'][0]['port']  # берём первый inbound
+
+        client_data = await xui.add_client(inbound_port, email=f"user{user_id}", remark=f"VPN User {user_id}")
+        client_id = client_data["data"]["id"]
+        access_link = client_data["data"]["link"]
+
+        now = datetime.utcnow()
+        expires_at = now + timedelta(days=tariff_days)
+
+        vpn_key = VPNKey(
+            idUser=user_id,
+            idServerVPN=server_id,
+            provider="xui",
+            provider_key_id=client_id,
+            access_data=access_link,
+            created_at=now,
+            expires_at=expires_at,
+            is_active=True
+        )
+        session.add(vpn_key)
+
+        vpn_sub = VPNSubscription(
+            idUser=user_id,
+            vpn_key_id=vpn_key.id,
+            started_at=now,
+            expires_at=expires_at,
+            status="active"
+        )
+        session.add(vpn_sub)
+        await session.commit()
+        await session.refresh(vpn_key)
+        await xui.close()
+
+        return {
+            "vpn_key_id": vpn_key.id,
+            "access_data": vpn_key.access_data,
+            "expires_at": vpn_key.expires_at.isoformat(),
+            "subscription_id": vpn_sub.id
+        }
+
+async def remove_vpn_xui(vpn_key: VPNKey):
+    server = await get_server_by_id(vpn_key.idServerVPN)
+    xui = XUIApi(server["api_url"], server["xui_username"], server["xui_password"])
+    await xui.remove_client(inbound_port=server.get("inbound_port", 443), client_id=vpn_key.provider_key_id)
+    await xui.close()
+
+
+"""
 async def create_vpn_for_user(user_id: int, server_id: int, tariff_id: int):
     async with async_session() as session:
         user = await session.get(User, user_id)
@@ -198,9 +258,7 @@ async def create_vpn_for_user(user_id: int, server_id: int, tariff_id: int):
             "expires_at": vpn_key.expires_at.isoformat(),
             "subscription_id": vpn_sub.id
         }
-
-
-
+"""
 
 
 
@@ -459,12 +517,16 @@ async def admin_add_server(data):
             nameVPN=data.nameVPN,
             price_usdt=data.price_usdt,
             max_conn=data.max_conn,
+            now_conn=0,  # при создании новый сервер всегда 0
             server_ip=data.server_ip,
             api_url=data.api_url,
             api_token=data.api_token,
+            xui_username=data.xui_username,
+            xui_password=data.xui_password,
+            inbound_port=data.inbound_port,
+            is_active=data.is_active,
             idTypeVPN=data.idTypeVPN,
-            idCountry=data.idCountry,
-            is_active=data.is_active
+            idCountry=data.idCountry
         )
         session.add(server)
         await session.commit()
@@ -481,7 +543,9 @@ async def admin_update_server(server_id: int, data):
         if not server:
             raise ValueError("ServerVPN не найден")
 
-        await session.execute(update(ServersVPN).where(ServersVPN.idServerVPN == server_id)
+        await session.execute(
+            update(ServersVPN)
+            .where(ServersVPN.idServerVPN == server_id)
             .values(
                 nameVPN=data.nameVPN,
                 price_usdt=data.price_usdt,
@@ -489,9 +553,12 @@ async def admin_update_server(server_id: int, data):
                 server_ip=data.server_ip,
                 api_url=data.api_url,
                 api_token=data.api_token,
+                xui_username=data.xui_username,
+                xui_password=data.xui_password,
+                inbound_port=data.inbound_port,
+                is_active=data.is_active,
                 idTypeVPN=data.idTypeVPN,
-                idCountry=data.idCountry,
-                is_active=data.is_active
+                idCountry=data.idCountry
             )
         )
         await session.commit()
@@ -544,44 +611,37 @@ async def create_order(user_id: int, server_id: int, tariff_id: int, amount_usdt
             "idTarif": tariff_id
         }
         
-        
+
+
 # --- ОПЛАТА И ПРОДЛЕНИЕ --- 
 async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
     async with async_session() as session:
+        # Получаем тариф
         tariff = await session.get(Tariff, tariff_id)
         if not tariff or not tariff.is_active:
-            raise ValueError("Тариф не найден")
+            raise ValueError("Тариф не найден или неактивен")
 
+        # Ищем существующий VPN ключ пользователя на этом сервере
         vpn_key = await session.scalar(
             select(VPNKey)
             .where(VPNKey.idUser == user_id, VPNKey.idServerVPN == server_id)
         )
 
-        now = datetime.utcnow()
-        new_expiry = now + timedelta(days=tariff.days)
+        if not vpn_key:
+            raise ValueError("VPN ключ не найден. Невозможно продлить несуществующий ключ.")
 
-        if vpn_key:
-            if vpn_key.expires_at > now:
-                vpn_key.expires_at += timedelta(days=tariff.days)
-            else:
-                vpn_key.expires_at = new_expiry
+        now = datetime.utcnow()
+        extend_days = timedelta(days=tariff.days)
+
+        # Продлеваем срок действия
+        if vpn_key.expires_at > now:
+            vpn_key.expires_at += extend_days
         else:
-            server = await session.get(ServersVPN, server_id)
-            outline = OutlineAPI(server.api_url, server.api_token)
-            key_data = outline.create_key(name=f"VPN User {user_id}")
-            vpn_key = VPNKey(
-                idUser=user_id,
-                idServerVPN=server_id,
-                provider="outline",
-                provider_key_id=key_data["id"],
-                access_data=key_data["accessUrl"],
-                expires_at=new_expiry,
-                is_active=True
-            )
-            session.add(vpn_key)
+            vpn_key.expires_at = now + extend_days
 
         await session.commit()
         await session.refresh(vpn_key)
+
         return {
             "vpn_key_id": vpn_key.id,
             "server_id": vpn_key.idServerVPN,
