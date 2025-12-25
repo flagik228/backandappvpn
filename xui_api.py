@@ -12,7 +12,7 @@ class XUIApi:
 
     # ====== INBOUND ======
     async def get_inbounds(self):
-        r = await self.client.get(f"{self.api_url}/api/v1/inbound")
+        r = await self.client.get(f"{self.api_url}/inbounds")
         r.raise_for_status()
         return r.json()
 
@@ -33,7 +33,7 @@ class XUIApi:
             "email": email,
             "remark": remark
         }
-        r = await self.client.post(f"{self.api_url}/api/v1/client", json=data)
+        r = await self.client.post(f"{self.api_url}/clients", json=data)
         r.raise_for_status()
         return r.json()
 
@@ -42,12 +42,12 @@ class XUIApi:
         Удаляем клиента по ID
         """
         data = {"port": inbound_port, "id": client_id}
-        r = await self.client.delete(f"{self.api_url}/api/v1/client", json=data)
+        r = await self.client.delete(f"{self.api_url}/clients", json=data)
         r.raise_for_status()
         return r.json()
 
     async def get_clients(self, inbound_port: int):
-        r = await self.client.get(f"{self.api_url}/api/v1/client?port={inbound_port}")
+        r = await self.client.get(f"{self.api_url}/clients?port={inbound_port}")
         r.raise_for_status()
         return r.json()
 
