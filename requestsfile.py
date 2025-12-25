@@ -165,21 +165,24 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         # 1️⃣ НАХОДИМ inbound ПО ПОРТУ ИЗ БД
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
+            await xui.close()
             raise Exception(f"Inbound с портом {server.inbound_port} не найден")
 
         inbound_id = inbound["id"]
 
         # 2️⃣ СОЗДАЁМ КЛИЕНТА
         email = f"user{user_id}@vpn"
-
-        await xui.add_client(
-            inbound_id=inbound_id,
-            email=email,
-            days=tariff_days
-        )
+        try:
+            await xui.add_client(
+                inbound_id=inbound_id,
+                email=email,
+                days=tariff_days
+            )
+        except Exception as e:
+            await xui.close()
+            raise Exception(f"Не удалось добавить клиента на XUI: {e}")
 
         # 3️⃣ ФОРМИРУЕМ VLESS ССЫЛКУ
-        # (берём данные из inbound)
         settings = inbound.get("settings", {})
         stream = inbound.get("streamSettings", {})
         reality = stream.get("realitySettings", {})
@@ -187,7 +190,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         public_key = reality.get("publicKey")
         server_name = reality.get("serverNames", [""])[0]
         short_id = reality.get("shortIds", [""])[0]
-        uuid = email  # в 3x-ui email == uuid
+        uuid = email  # email используется как UUID
 
         access_link = (
             f"vless://{uuid}@{server.server_ip}:{server.inbound_port}"
@@ -207,7 +210,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
             idUser=user_id,
             idServerVPN=server_id,
             provider="xui",
-            provider_key_id=email,   # ← ВАЖНО
+            provider_key_id=email,
             access_data=access_link,
             created_at=now,
             expires_at=expires_at,
@@ -236,33 +239,44 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
             "expires_at": vpn_key.expires_at.isoformat(),
             "subscription_id": vpn_sub.id
         }
-        
-        
-        
+
+
 # =======================
 # --- УДАЛЕНИЕ КЛЮЧА
 # =======================
 async def remove_vpn_xui(vpn_key: VPNKey):
-    server = await get_server_by_id(vpn_key.idServerVPN)
+    async with async_session() as session:
+        server = await session.get(ServersVPN, vpn_key.idServerVPN)
+        if not server:
+            raise Exception("Сервер не найден")
 
-    xui = XUIApi(
-        server["api_url"],
-        server["xui_username"],
-        server["xui_password"]
-    )
+        xui = XUIApi(
+            server.api_url,
+            server.xui_username,
+            server.xui_password
+        )
 
-    inbound = await xui.get_inbound_by_port(server["inbound_port"])
-    if not inbound:
-        raise Exception("Inbound не найден")
+        inbound = await xui.get_inbound_by_port(server.inbound_port)
+        if not inbound:
+            await xui.close()
+            raise Exception("Inbound не найден")
 
-    inbound_id = inbound["id"]
+        inbound_id = inbound["id"]
 
-    await xui.remove_client(
-        inbound_id=inbound_id,
-        email=vpn_key.provider_key_id
-    )
+        try:
+            await xui.remove_client(
+                inbound_id=inbound_id,
+                email=vpn_key.provider_key_id
+            )
+        except Exception as e:
+            await xui.close()
+            raise Exception(f"Не удалось удалить клиента на XUI: {e}")
 
-    await xui.close()
+        await xui.close()
+
+        # Деактивируем ключ в БД
+        vpn_key.is_active = False
+        await session.commit()
 
 
 """
