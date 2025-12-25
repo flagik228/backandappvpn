@@ -429,7 +429,7 @@ async def admin_update_server(server_id: int, server: ServerUpdate):
     # конвертация Pydantic в словарь с нужными типами
     server_data = {
         "nameVPN": server.nameVPN,
-        "price_usdt": float(server.price_usdt),
+        "price_usdt": Decimal(server.price_usdt),
         "max_conn": server.max_conn,
         "server_ip": server.server_ip,
         "api_url": server.api_url,
