@@ -547,18 +547,18 @@ async def admin_update_server(server_id: int, data):
             update(ServersVPN)
             .where(ServersVPN.idServerVPN == server_id)
             .values(
-                nameVPN=data.nameVPN,
-                price_usdt=data.price_usdt,
-                max_conn=data.max_conn,
-                server_ip=data.server_ip,
-                api_url=data.api_url,
-                api_token=data.api_token,
-                xui_username=data.xui_username,
-                xui_password=data.xui_password,
-                inbound_port=data.inbound_port,
-                is_active=data.is_active,
-                idTypeVPN=data.idTypeVPN,
-                idCountry=data.idCountry
+                nameVPN=data["nameVPN"],
+                price_usdt=data["price_usdt"],
+                max_conn=data["max_conn"],
+                server_ip=data["server_ip"],
+                api_url=data["api_url"],
+                api_token=data["api_token"],
+                xui_username=data["xui_username"],
+                xui_password=data["xui_password"],
+                inbound_port=data["inbound_port"],
+                is_active=data["is_active"],
+                idTypeVPN=data["idTypeVPN"],
+                idCountry=data["idCountry"]
             )
         )
         await session.commit()

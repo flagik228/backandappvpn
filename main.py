@@ -426,7 +426,22 @@ async def admin_add_server(server: ServerCreate):
 
 @app.patch("/api/admin/servers/{server_id}")
 async def admin_update_server(server_id: int, server: ServerUpdate):
-    return await rq.admin_update_server(server_id, server)
+    # конвертация Pydantic в словарь с нужными типами
+    server_data = {
+        "nameVPN": server.nameVPN,
+        "price_usdt": float(server.price_usdt),
+        "max_conn": server.max_conn,
+        "server_ip": server.server_ip,
+        "api_url": server.api_url,
+        "api_token": server.api_token,
+        "xui_username": server.xui_username,
+        "xui_password": server.xui_password,
+        "inbound_port": server.inbound_port,
+        "is_active": bool(server.is_active),
+        "idTypeVPN": server.idTypeVPN,
+        "idCountry": server.idCountry
+    }
+    return await rq.admin_update_server(server_id, server_data)
 
 @app.delete("/api/admin/servers/{server_id}")
 async def admin_delete_server(server_id: int):
