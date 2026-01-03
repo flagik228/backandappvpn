@@ -103,10 +103,10 @@ async def successful_payment(message: Message):
         await message.answer(
             f"✅ VPN активирован!\n"
             f"Сервер: {server.nameVPN}\n"
-            f"Действует до: {vpn_data['expires_at']}\n"
-            f"Ваш ключ: {vpn_data['access_data']}"
+            f"Действует до: {vpn_data['expires_at_human']}\n"
+            f"Ваш ключ:\n{vpn_data['access_data']}"
         )
-
+        
 # API
 # ======================
 
@@ -623,7 +623,3 @@ async def get_tariffs(server_id: int):
         return await rq.get_server_tariffs(server_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-    
-
-    

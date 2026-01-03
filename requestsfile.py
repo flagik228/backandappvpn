@@ -8,7 +8,6 @@ from decimal import Decimal
 from sqlalchemy import func
 from urllib.parse import quote
 
-# from outline_api import OutlineAPI
 from xui_api import XUIApi
 
 
@@ -168,57 +167,10 @@ async def create_order(user_id: int, server_id: int, tariff_id: int, amount_usdt
             "idTarif": tariff_id
         }
         
+# форматирование даты 2026-01-04 22:46
+def format_datetime_ru(dt: datetime) -> str:
+    return dt.strftime("%d.%m.%Y %H:%M")
 
-
-# --- ОПЛАТА И ПРОДЛЕНИЕ --- 
-async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
-    async with async_session() as session:
-        tariff = await session.get(Tariff, tariff_id)
-        if not tariff:
-            raise ValueError("Tariff not found")
-
-        vpn_key = await session.scalar(
-            select(VPNKey)
-            .where(VPNKey.idUser == user_id)
-            .where(VPNKey.idServerVPN == server_id)
-        )
-
-        if not vpn_key:
-            raise ValueError("VPN key not found")
-
-        server = await session.get(ServersVPN, server_id)
-
-        xui = XUIApi(
-            server.api_url,
-            server.xui_username,
-            server.xui_password
-        )
-
-        inbound = await xui.get_inbound_by_port(server.inbound_port)
-        if not inbound:
-            raise Exception("Inbound not found")
-
-        # 🔥 ПРОДЛЯЕМ В XUI
-        await xui.extend_client(
-            inbound_id=inbound.id,
-            email=f"{vpn_key.provider_key_id}@vpn",
-            days=tariff.days
-        )
-
-        now = datetime.utcnow()
-        if vpn_key.expires_at > now:
-            vpn_key.expires_at += timedelta(days=tariff.days)
-        else:
-            vpn_key.expires_at = now + timedelta(days=tariff.days)
-
-        await session.commit()
-        await xui.close()
-
-        return {
-            "vpn_key_id": vpn_key.id,
-            "access_data": vpn_key.access_data,
-            "expires_at": vpn_key.expires_at.isoformat()
-        }
 
 # --- Генерация уникального email для клиента
 async def generate_unique_client_email(
@@ -339,7 +291,60 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         return {
             "vpn_key_id": vpn_key.id,
             "access_data": access_link,
-            "expires_at": expires_at.isoformat()
+            "expires_at": expires_at.isoformat(),          # для API / логики
+            "expires_at_human": format_datetime_ru(expires_at)  # для человека
+        }
+        
+        
+# --- ОПЛАТА И ПРОДЛЕНИЕ --- 
+async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
+    async with async_session() as session:
+        tariff = await session.get(Tariff, tariff_id)
+        if not tariff:
+            raise ValueError("Tariff not found")
+
+        vpn_key = await session.scalar(
+            select(VPNKey)
+            .where(VPNKey.idUser == user_id)
+            .where(VPNKey.idServerVPN == server_id)
+        )
+
+        if not vpn_key:
+            raise ValueError("VPN key not found")
+
+        server = await session.get(ServersVPN, server_id)
+
+        xui = XUIApi(
+            server.api_url,
+            server.xui_username,
+            server.xui_password
+        )
+
+        inbound = await xui.get_inbound_by_port(server.inbound_port)
+        if not inbound:
+            raise Exception("Inbound not found")
+
+        # 🔥 ПРОДЛЯЕМ В XUI
+        await xui.extend_client(
+            inbound_id=inbound.id,
+            email=f"{vpn_key.provider_key_id}@vpn",
+            days=tariff.days
+        )
+
+        now = datetime.utcnow()
+        if vpn_key.expires_at > now:
+            vpn_key.expires_at += timedelta(days=tariff.days)
+        else:
+            vpn_key.expires_at = now + timedelta(days=tariff.days)
+
+        await session.commit()
+        await xui.close()
+
+        return {
+            "vpn_key_id": vpn_key.id,
+            "access_data": vpn_key.access_data,
+            "expires_at": vpn_key.expires_at.isoformat(),
+            "expires_at_human": format_datetime_ru(vpn_key.expires_at)
         }
 
 
