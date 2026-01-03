@@ -39,6 +39,21 @@ class XUIApi:
     async def get_inbound(self, inbound_id: int):
         await self.login()
         return await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
+    
+    async def get_inbound_raw(self, inbound_id: int) -> dict:
+        await self.login()
+
+        def _req():
+            r = self.api.client.get(
+                f"/panel/api/inbounds/get/{inbound_id}"
+            )
+            r.raise_for_status()
+            data = r.json()
+            if not data.get("success"):
+                raise Exception(f"XUI error: {data}")
+            return data["obj"]
+
+        return await asyncio.to_thread(_req)
 
     # ————————— CLIENTS —————————
 
