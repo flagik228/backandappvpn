@@ -332,12 +332,12 @@ async def remove_vpn_xui(vpn_key: VPNKey):
             await xui.close()
             raise Exception("Inbound не найден")
 
-        inbound_id = inbound["id"]
+        inbound_id = inbound.id
 
         try:
             await xui.remove_client(
                 inbound_id=inbound_id,
-                email=vpn_key.provider_key_id
+                email=f"{vpn_key.provider_key_id}@vpn"
             )
         except Exception as e:
             await xui.close()

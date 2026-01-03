@@ -90,9 +90,9 @@ class XUIApi:
 
         # 🔥 ЕДИНСТВЕННО ПРАВИЛЬНЫЙ СПОСОБ
         await asyncio.to_thread(
-            self.api.inbound.update,
-            inbound_id,
-            inbound.settings.dict()
+        self.api.inbound.update,
+        inbound_id,
+        inbound.settings
         )
 
         return {
@@ -126,9 +126,7 @@ class XUIApi:
             raise Exception("Клиент не найден")
 
         await asyncio.to_thread(
-            self.api.inbound.update,
-            inbound_id,
-            inbound.settings.dict()
+            self.api.inbound.update(inbound_id, inbound.settings)
         )
 
         return True
@@ -157,9 +155,7 @@ class XUIApi:
         inbound.settings.clients = new_clients
 
         await asyncio.to_thread(
-            self.api.inbound.update,
-            inbound_id,
-            inbound.settings.dict()
+            self.api.inbound.update(inbound_id, inbound.settings)
         )
 
         return True
