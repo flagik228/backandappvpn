@@ -224,24 +224,36 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
 async def generate_unique_client_email(
     session,
     user_id: int,
-    server: ServersVPN
+    server: ServersVPN,
+    xui: XUIApi
 ) -> str:
     """
-    Генерирует уникальный email клиента для XUI:
     <COUNTRY>-<TGID>-<N>@artcry
     """
 
-    # получаем страну
     country = await session.get(CountriesVPN, server.idCountry)
     country_code = country.nameCountry.upper()[:2]
 
-    # сколько VPN у пользователя уже есть
-    count = await session.scalar(
-        select(func.count(VPNKey.id))
-        .where(VPNKey.idUser == user_id)
-    )
+    inbound = await xui.get_inbound_by_port(server.inbound_port)
+    if not inbound:
+        raise Exception("Inbound not found")
 
-    return f"{country_code}-{user_id}-{count + 1}@artcry"
+    # считаем клиентов в XUI
+    existing = inbound.settings.clients or []
+
+    prefix = f"{country_code}-{user_id}-"
+    nums = []
+
+    for c in existing:
+        if c.email.startswith(prefix):
+            try:
+                nums.append(int(c.email.split("-")[-1].split("@")[0]))
+            except:
+                pass
+
+    next_num = max(nums) + 1 if nums else 1
+
+    return f"{prefix}{next_num}@artcry"
 
 
 # =====================================================================
@@ -258,7 +270,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
 
         # 👉 генерируем уникальный email
         client_email = await generate_unique_client_email(
-            session, user_id, server
+        session, user_id, server, xui
         )
 
         xui = XUIApi(
@@ -281,10 +293,8 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         uuid = client["uuid"]
 
         # 🔍 получаем Reality настройки
-        inbound_raw = await xui.get_inbound_raw(inbound.id)
-
-        stream = inbound_raw["streamSettings"]
-        reality = stream["realitySettings"]
+        stream = inbound.stream_settings
+        reality = stream.reality_settings
 
         public_key = reality["settings"]["publicKey"]
         server_name = reality["serverNames"][0]

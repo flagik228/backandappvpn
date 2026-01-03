@@ -40,6 +40,7 @@ class XUIApi:
         await self.login()
         return await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
     
+    """
     async def get_inbound_raw(self, inbound_id: int) -> dict:
         await self.login()
 
@@ -54,6 +55,7 @@ class XUIApi:
             return data["obj"]
 
         return await asyncio.to_thread(_req)
+    """
 
     # ————————— CLIENTS —————————
 
