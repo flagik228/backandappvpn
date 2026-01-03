@@ -268,15 +268,16 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         if not user or not server:
             raise Exception("User or server not found")
 
-        # 👉 генерируем уникальный email
-        client_email = await generate_unique_client_email(
-        session, user_id, server, xui
-        )
-
+        # 🔑 сначала создаём XUI API
         xui = XUIApi(
             server.api_url,
             server.xui_username,
             server.xui_password
+        )
+
+        # 👉 потом генерируем email
+        client_email = await generate_unique_client_email(
+            session, user_id, server, xui
         )
 
         inbound = await xui.get_inbound_by_port(server.inbound_port)
@@ -301,8 +302,8 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         short_id = reality["shortIds"][0]
 
         query = {
-            "type": stream["network"],
-            "security": stream["security"],
+            "type": stream.network,
+            "security": stream.security,
             "pbk": public_key,
             "fp": "chrome",
             "sni": server_name,
