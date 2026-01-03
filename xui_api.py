@@ -26,6 +26,11 @@ class XUIApi:
 
         await asyncio.to_thread(self.api.login)
         self._logged_in = True
+        
+    
+    async def close(self):
+        # py3xui не требует явного close, но метод оставляем
+        pass
 
     # ================= INBOUNDS =================
 
@@ -50,15 +55,17 @@ class XUIApi:
     # ================= CLIENTS =================
 
     async def add_client(self, inbound_id: int, days: int):
-        """Создаёт нового клиента.Возвращает dict:
-        {
-            uuid,
-            email,
-            expiry_time
-        }
-        """
-
+        """Создаёт нового клиента в inbound Возвращает:
+        {uuid,email,expiry_time}"""
         await self.login()
+
+        inbound = await asyncio.to_thread(
+            self.api.inbound.get_by_id,
+            inbound_id
+        )
+
+        if not inbound:
+            raise Exception("Inbound не найден")
 
         client_uuid = str(uuid.uuid4())
         email = f"{client_uuid}@vpn"
@@ -67,15 +74,22 @@ class XUIApi:
             (datetime.utcnow() + timedelta(days=days)).timestamp() * 1000
         )
 
+        clients = inbound.settings.clients or []
+
+        clients.append({
+            "id": client_uuid,
+            "email": email,
+            "enable": True,
+            "expiryTime": expiry_time
+        })
+
+        inbound.settings.clients = clients
+
+        # 🔥 ЕДИНСТВЕННО ПРАВИЛЬНЫЙ СПОСОБ
         await asyncio.to_thread(
-            self.api.inbound.add,
+            self.api.inbound.update,
             inbound_id,
-            {
-                "id": client_uuid,
-                "email": email,
-                "enable": True,
-                "expiryTime": expiry_time,
-            }
+            inbound.settings.dict()
         )
 
         return {
@@ -83,9 +97,10 @@ class XUIApi:
             "email": email,
             "expiry_time": expiry_time,
         }
+        
 
     async def extend_client(self, inbound_id: int, email: str, days: int):
-        """Реальное продление клиента в XUI"""
+        """Продление существующего клиента"""
 
         await self.login()
 
@@ -97,14 +112,10 @@ class XUIApi:
         if not inbound:
             raise Exception("Inbound не найден")
 
-        clients = inbound.settings.clients
         found = False
-
-        for client in clients:
+        for client in inbound.settings.clients:
             if client.email == email:
-                client.expiryTime = int(
-                    (datetime.utcnow() + timedelta(days=days)).timestamp() * 1000
-                )
+                client.expiryTime += days * 24 * 60 * 60 * 1000
                 found = True
                 break
 
@@ -120,7 +131,7 @@ class XUIApi:
         return True
 
     async def remove_client(self, inbound_id: int, email: str):
-        """Удаляет клиента из inbound"""
+        """Удаление клиента"""
 
         await self.login()
 
@@ -132,10 +143,12 @@ class XUIApi:
         if not inbound:
             raise Exception("Inbound не найден")
 
-        clients = inbound.settings.clients
-        new_clients = [c for c in clients if c.email != email]
+        new_clients = [
+            c for c in inbound.settings.clients
+            if c.email != email
+        ]
 
-        if len(new_clients) == len(clients):
+        if len(new_clients) == len(inbound.settings.clients):
             raise Exception("Клиент не найден")
 
         inbound.settings.clients = new_clients
