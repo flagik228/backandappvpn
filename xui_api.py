@@ -44,8 +44,8 @@ class XUIApi:
         await self.login()
 
         def _req():
-            r = self.api.client.get(
-                f"/panel/api/inbounds/get/{inbound_id}"
+            r = self.api._client.get(
+            f"/panel/api/inbounds/get/{inbound_id}"
             )
             r.raise_for_status()
             data = r.json()
