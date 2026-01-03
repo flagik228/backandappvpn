@@ -57,24 +57,18 @@ class XUIApi:
 
     # ————————— CLIENTS —————————
 
-    async def add_client(self, inbound_id: int, days: int):
-        """Добавляет нового клиента в inbound"""
-
+    async def add_client(self, inbound_id: int, email: str, days: int):
         await self.login()
 
-        # получаем inbound
         inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
         if not inbound:
             raise Exception("Inbound не найден")
 
-        # новый UUID и email
         client_uuid = str(uuid.uuid4())
-        email = f"{client_uuid}@vpn"
+        expiry_time = int(
+            (datetime.utcnow() + timedelta(days=days)).timestamp() * 1000
+        )
 
-        # время истечения в мс
-        expiry_time = int((datetime.utcnow() + timedelta(days=days)).timestamp() * 1000)
-
-        # формируем клиентскую модель
         new_client = Client(
             id=client_uuid,
             email=email,
@@ -82,11 +76,13 @@ class XUIApi:
             expiryTime=expiry_time
         )
 
-        # добавляем клиента через api.client.add
-        # py3xui ожидает список клиентов для добавления
         await asyncio.to_thread(self.api.client.add, inbound_id, [new_client])
 
-        return {"uuid": client_uuid, "email": email, "expiry_time": expiry_time}
+        return {
+            "uuid": client_uuid,
+            "email": email,
+            "expiry_time": expiry_time
+        }
 
     async def extend_client(self, inbound_id: int, email: str, days: int):
         """Продлевает существующего клиента"""
