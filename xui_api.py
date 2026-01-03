@@ -3,6 +3,8 @@ from datetime import datetime, timedelta
 from py3xui import Api
 import uuid
 import asyncio
+# from py3xui.models import Client
+from py3xui.client.client import Client
 
 
 class XUIApi:
@@ -76,12 +78,13 @@ class XUIApi:
 
         clients = inbound.settings.clients or []
 
-        clients.append({
-            "id": client_uuid,
-            "email": email,
-            "enable": True,
-            "expiryTime": expiry_time
-        })
+        clients.append(
+        Client(
+            id=client_uuid,
+            email=email,
+            enable=True,
+            expiryTime=expiry_time
+        ))
 
         inbound.settings.clients = clients
 
