@@ -144,9 +144,85 @@ async def get_servers_full():
         return result
 
 
-# =======================
+
+# =====================================================================
+# --- СОЗДАНИЕ ЗАКАЗА ---    
+async def create_order(user_id: int, server_id: int, tariff_id: int, amount_usdt: Decimal, currency: str = "XTR"):
+    async with async_session() as session:
+        order = Order(
+            idUser=user_id,
+            server_id=server_id,
+            idTarif=tariff_id,
+            amount=int(amount_usdt),
+            currency=currency,
+            status="pending"
+        )
+        session.add(order)
+        await session.commit()
+        await session.refresh(order)
+        return {
+            "order_id": order.id,
+            "amount": str(amount_usdt),
+            "currency": currency,
+            "idTarif": tariff_id
+        }
+        
+
+
+# --- ОПЛАТА И ПРОДЛЕНИЕ --- 
+async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
+    async with async_session() as session:
+        tariff = await session.get(Tariff, tariff_id)
+        if not tariff:
+            raise ValueError("Tariff not found")
+
+        vpn_key = await session.scalar(
+            select(VPNKey)
+            .where(VPNKey.idUser == user_id)
+            .where(VPNKey.idServerVPN == server_id)
+        )
+
+        if not vpn_key:
+            raise ValueError("VPN key not found")
+
+        server = await session.get(ServersVPN, server_id)
+
+        xui = XUIApi(
+            server.api_url,
+            server.xui_username,
+            server.xui_password
+        )
+
+        inbound = await xui.get_inbound_by_port(server.inbound_port)
+        if not inbound:
+            raise Exception("Inbound not found")
+
+        # 🔥 ПРОДЛЯЕМ В XUI
+        await xui.extend_client(
+            inbound_id=inbound.id,
+            email=f"{vpn_key.provider_key_id}@vpn",
+            days=tariff.days
+        )
+
+        now = datetime.utcnow()
+        if vpn_key.expires_at > now:
+            vpn_key.expires_at += timedelta(days=tariff.days)
+        else:
+            vpn_key.expires_at = now + timedelta(days=tariff.days)
+
+        await session.commit()
+        await xui.close()
+
+        return {
+            "vpn_key_id": vpn_key.id,
+            "access_data": vpn_key.access_data,
+            "expires_at": vpn_key.expires_at.isoformat()
+        }
+
+
+# =====================================================================
 # --- СОЗДАНИЕ КЛЮЧА, УСПЕШНАЯ ОПЛАТА
-# =======================
+# =====================================================================
 
 async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
     async with async_session() as session:
@@ -162,39 +238,37 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
             server.xui_password
         )
 
-        # 1️⃣ НАХОДИМ inbound ПО ПОРТУ ИЗ БД
+        # 1️⃣ inbound
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
-            await xui.close()
-            raise Exception(f"Inbound с портом {server.inbound_port} не найден")
+            raise Exception("Inbound not found")
 
-        inbound_id = inbound["id"]
+        inbound_id = inbound.id
 
-        # 2️⃣ СОЗДАЁМ КЛИЕНТА
-        email = f"user{user_id}@vpn"
-        try:
-            await xui.add_client(
-                inbound_id=inbound_id,
-                email=email,
-                days=tariff_days
-            )
-        except Exception as e:
-            await xui.close()
-            raise Exception(f"Не удалось добавить клиента на XUI: {e}")
+        # 2️⃣ создаём клиента
+        client = await xui.add_client(
+            inbound_id=inbound_id,
+            days=tariff_days
+        )
 
-        # 3️⃣ ФОРМИРУЕМ VLESS ССЫЛКУ
-        settings = inbound.get("settings", {})
-        stream = inbound.get("streamSettings", {})
-        reality = stream.get("realitySettings", {})
+        uuid = client["uuid"]
 
-        public_key = reality.get("publicKey")
-        server_name = reality.get("serverNames", [""])[0]
-        short_id = reality.get("shortIds", [""])[0]
-        uuid = email  # email используется как UUID
+        # 3️⃣ получаем настройки Reality
+        inbound_full = await xui.get_inbound(inbound_id)
 
+        stream = inbound_full.streamSettings
+        reality = stream["realitySettings"]
+
+        public_key = reality["publicKey"]
+        server_name = reality["serverNames"][0]
+        short_id = reality["shortIds"][0]
+
+        # 4️⃣ формируем VLESS ссылку
         access_link = (
             f"vless://{uuid}@{server.server_ip}:{server.inbound_port}"
-            f"?type=tcp&security=reality"
+            f"?type=tcp"
+            f"&encryption=none"
+            f"&security=reality"
             f"&pbk={public_key}"
             f"&fp=chrome"
             f"&sni={server_name}"
@@ -205,12 +279,12 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         now = datetime.utcnow()
         expires_at = now + timedelta(days=tariff_days)
 
-        # 4️⃣ СОХРАНЯЕМ В БД
+        # 5️⃣ сохраняем в БД
         vpn_key = VPNKey(
             idUser=user_id,
             idServerVPN=server_id,
             provider="xui",
-            provider_key_id=email,
+            provider_key_id=uuid,
             access_data=access_link,
             created_at=now,
             expires_at=expires_at,
@@ -229,15 +303,12 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         session.add(vpn_sub)
 
         await session.commit()
-        await session.refresh(vpn_key)
-
         await xui.close()
 
         return {
             "vpn_key_id": vpn_key.id,
-            "access_data": vpn_key.access_data,
-            "expires_at": vpn_key.expires_at.isoformat(),
-            "subscription_id": vpn_sub.id
+            "access_data": access_link,
+            "expires_at": expires_at.isoformat()
         }
 
 
@@ -277,67 +348,6 @@ async def remove_vpn_xui(vpn_key: VPNKey):
         # Деактивируем ключ в БД
         vpn_key.is_active = False
         await session.commit()
-
-
-"""
-async def create_vpn_for_user(user_id: int, server_id: int, tariff_id: int):
-    async with async_session() as session:
-        user = await session.get(User, user_id)
-        if not user:
-            raise ValueError("User not found")
-
-        server = await session.get(ServersVPN, server_id)
-        if not server:
-            raise ValueError("Server not found")
-
-        tariff = await session.get(Tariff, tariff_id)
-        if not tariff or not tariff.is_active:
-            raise ValueError("Tariff not found")
-
-        # Создаём ключ через OutlineAPI
-        outline = OutlineAPI(server.api_url, server.api_token)
-        key_data = outline.create_key(name=f"VPN User {user_id}")
-
-        now = datetime.utcnow()
-        expires_at = now + timedelta(days=tariff.days)
-
-        # Сохраняем VPNKey
-        vpn_key = VPNKey(
-            idUser=user_id,
-            idServerVPN=server_id,
-            provider="outline",
-            provider_key_id=key_data["id"],
-            access_data=key_data.get("accessUrl") or key_data.get("access_url") or key_data["id"],
-            created_at=now,
-            expires_at=expires_at,
-            is_active=True
-        )
-        session.add(vpn_key)
-        await session.flush()  # присвоит vpn_key.id
-
-        # Создаём подписку
-        vpn_sub = VPNSubscription(
-            idUser=user_id,
-            vpn_key_id=vpn_key.id,
-            started_at=now,
-            expires_at=expires_at,
-            status="active"
-        )
-        session.add(vpn_sub)
-
-        await session.commit()
-        await session.refresh(vpn_key)
-        await session.refresh(vpn_sub)
-
-        return {
-            "vpn_key_id": vpn_key.id,
-            "access_data": vpn_key.access_data,
-            "expires_at": vpn_key.expires_at.isoformat(),
-            "subscription_id": vpn_sub.id
-        }
-"""
-
-
 
 
 # =======================
@@ -667,61 +677,3 @@ async def get_server_tariffs(server_id: int):
         } for t in tariffs]
         
 
-# --- СОЗДАНИЕ ЗАКАЗА ---    
-async def create_order(user_id: int, server_id: int, tariff_id: int, amount_usdt: Decimal, currency: str = "XTR"):
-    async with async_session() as session:
-        order = Order(
-            idUser=user_id,
-            server_id=server_id,
-            idTarif=tariff_id,
-            amount=int(amount_usdt),
-            currency=currency,
-            status="pending"
-        )
-        session.add(order)
-        await session.commit()
-        await session.refresh(order)
-        return {
-            "order_id": order.id,
-            "amount": str(amount_usdt),
-            "currency": currency,
-            "idTarif": tariff_id
-        }
-        
-
-
-# --- ОПЛАТА И ПРОДЛЕНИЕ --- 
-async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
-    async with async_session() as session:
-        # Получаем тариф
-        tariff = await session.get(Tariff, tariff_id)
-        if not tariff or not tariff.is_active:
-            raise ValueError("Тариф не найден или неактивен")
-
-        # Ищем существующий VPN ключ пользователя на этом сервере
-        vpn_key = await session.scalar(
-            select(VPNKey)
-            .where(VPNKey.idUser == user_id, VPNKey.idServerVPN == server_id)
-        )
-
-        if not vpn_key:
-            raise ValueError("VPN ключ не найден. Невозможно продлить несуществующий ключ.")
-
-        now = datetime.utcnow()
-        extend_days = timedelta(days=tariff.days)
-
-        # Продлеваем срок действия
-        if vpn_key.expires_at > now:
-            vpn_key.expires_at += extend_days
-        else:
-            vpn_key.expires_at = now + extend_days
-
-        await session.commit()
-        await session.refresh(vpn_key)
-
-        return {
-            "vpn_key_id": vpn_key.id,
-            "server_id": vpn_key.idServerVPN,
-            "access_data": vpn_key.access_data,
-            "expires_at": vpn_key.expires_at.isoformat()
-        }

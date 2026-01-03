@@ -268,6 +268,42 @@ async def renew_success(payload: str):
 
 
 
+# --- Создание заказа Stars --- 
+class OrderRequest(BaseModel):
+    tg_id: int
+    server_id: int
+    tariff_id: int
+
+
+@app.post("/api/vpn/order")
+async def create_order_endpoint(data: OrderRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        tariff = await session.get(Tariff, data.tariff_id)
+        if not tariff or not tariff.is_active:
+            raise HTTPException(status_code=404, detail="Tariff not found")
+
+        # Конвертация USDT -> Stars (берём из ExchangeRate)
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        if not rate:
+            raise HTTPException(status_code=500, detail="Exchange rate not found")
+
+        amount_stars = int(tariff.price_tarif / rate.rate)
+
+        return await rq.create_order(user.idUser, data.server_id, data.tariff_id, Decimal(amount_stars), currency="XTR")
+    
+    
+    
+class VPNPayRequest(BaseModel):
+    tg_id: int
+    tariff_id: int
+
+
+
+
 # ======================
 # PUBLIC
 # ======================
@@ -589,36 +625,5 @@ async def get_tariffs(server_id: int):
         raise HTTPException(status_code=500, detail=str(e))
     
     
-# --- Создание заказа Stars --- 
-class OrderRequest(BaseModel):
-    tg_id: int
-    server_id: int
-    tariff_id: int
 
-
-@app.post("/api/vpn/order")
-async def create_order_endpoint(data: OrderRequest):
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        tariff = await session.get(Tariff, data.tariff_id)
-        if not tariff or not tariff.is_active:
-            raise HTTPException(status_code=404, detail="Tariff not found")
-
-        # Конвертация USDT -> Stars (берём из ExchangeRate)
-        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
-        if not rate:
-            raise HTTPException(status_code=500, detail="Exchange rate not found")
-
-        amount_stars = int(tariff.price_tarif / rate.rate)
-
-        return await rq.create_order(user.idUser, data.server_id, data.tariff_id, Decimal(amount_stars), currency="XTR")
-    
-    
-    
-class VPNPayRequest(BaseModel):
-    tg_id: int
-    tariff_id: int
     
