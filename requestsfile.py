@@ -243,10 +243,18 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         client = await xui.add_client(inbound_id, tariff_days)
         uuid = client["uuid"]
 
-        # получаем inbound снова, чтобы достать reality
+        # 3️⃣ получаем настройки Reality (через raw!)
         inbound_full = await xui.get_inbound(inbound_id)
-        stream = inbound_full.streamSettings
-        reality = stream["realitySettings"]
+
+        raw = inbound_full.raw
+
+        stream = raw.get("streamSettings")
+        if not stream:
+            raise Exception("streamSettings not found in inbound")
+
+        reality = stream.get("realitySettings")
+        if not reality:
+            raise Exception("realitySettings not found in inbound")
 
         public_key = reality["publicKey"]
         server_name = reality["serverNames"][0]
