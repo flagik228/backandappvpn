@@ -40,13 +40,7 @@ async def lifespan(app_: FastAPI):
 
 app = FastAPI(title="ArtCry VPN", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],)
 
 
 # ======================
@@ -89,7 +83,6 @@ async def successful_payment(message: Message):
         # Создаём VPN через OutlineAPI
         try:
             vpn_data = await create_vpn_xui(user_id, server_id, tariff.days)
-            # vpn_data = await create_vpn_for_user(user_id, server_id, tariff_id)
         except Exception as e:
             await message.answer(f"❌ Ошибка при создании VPN ключа: {e}")
             return
@@ -168,8 +161,7 @@ async def create_invoice(data: CreateInvoiceRequest):
                 prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)]
             )
         )
-
-        return {"invoice_link": invoice_link}  # <- просто строка
+        return {"invoice_link": invoice_link} 
 
 
 
@@ -196,10 +188,9 @@ async def renew_invoice(data: RenewInvoiceRequest):
             raise HTTPException(status_code=404, detail="Server not found")
 
         # Берём тариф на выбранное количество месяцев (предположим 30 дней в месяц)
-        tariff_days = 30 * data.months
+        # tariff_days = 30 * data.months
 
         # Рассчитываем цену по тарифу
-        # Берём тариф с серверов, возьмем минимальную цену за 30 дней
         tariff = await session.scalar(select(Tariff).where(Tariff.server_id == server.idServerVPN, Tariff.is_active == True))
         if not tariff:
             raise HTTPException(status_code=404, detail="Tariff not found")
@@ -237,7 +228,6 @@ async def renew_invoice(data: RenewInvoiceRequest):
                 prices=[{"label": f"{data.months} мес. VPN", "amount": stars_price}]
             )
         )
-
         return {
             "invoice": invoice_link,
             "payload": f"renew:{order.id}"
@@ -295,11 +285,6 @@ async def create_order_endpoint(data: OrderRequest):
 
         return await rq.create_order(user.idUser, data.server_id, data.tariff_id, Decimal(amount_stars), currency="XTR")
     
-    
-    
-class VPNPayRequest(BaseModel):
-    tg_id: int
-    tariff_id: int
 
 
 
@@ -323,14 +308,14 @@ async def my_vpns(tg_id: int):
 
 class RegisterUser(BaseModel):
     tg_id: int
-    userRole: str
     referrer_tg_id: int | None = None
 
 
 @app.post("/api/register")
 async def register_user(data: RegisterUser):
     async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == data.tg_id)
+        user = await session.scalar(
+            select(User).where(User.tg_id == data.tg_id)
         )
         if user:
             return {
@@ -338,64 +323,63 @@ async def register_user(data: RegisterUser):
                 "idUser": user.idUser,
                 "referrer_id": user.referrer_id
             }
-
         referrer_id = None
         if data.referrer_tg_id and data.referrer_tg_id != data.tg_id:
-            ref_user = await session.scalar(select(User).where(User.tg_id == data.referrer_tg_id)
+            ref_user = await session.scalar(
+                select(User).where(User.tg_id == data.referrer_tg_id)
             )
             if ref_user:
                 referrer_id = ref_user.idUser
-
+        # 🔐 ВСЕГДА user
         new_user = User(
             tg_id=data.tg_id,
-            userRole=data.userRole,
+            userRole="user",
             referrer_id=referrer_id
         )
         session.add(new_user)
         await session.commit()
         await session.refresh(new_user)
-
         return {
             "status": "ok",
             "idUser": new_user.idUser,
             "referrer_id": referrer_id
         }
 
-# ======================
+# ========================================================================================
 # ADMIN MODELS
 # ======================
 
-class TypeVPNCreate(BaseModel):
-    nameType: str
-    descriptionType: str
+# ======================
+# ADMIN: USERS
+# ======================
+
+class AdminUserUpdate(BaseModel):
+    userRole: str
+
+@app.get("/api/admin/users")
+async def admin_users():
+    return await rq.admin_get_users()
 
 
-class CountryCreate(BaseModel):
-    nameCountry: str
+@app.patch("/api/admin/users/{user_id}")
+async def admin_update_user(user_id: int, data: AdminUserUpdate):
+    return await rq.admin_update_user(user_id, data.userRole)
 
 
-class ServerCreate(BaseModel):
-    nameVPN: str
-    price_usdt: Decimal
-    max_conn: int
-    server_ip: str
-    api_url: str
-    api_token: str
-    xui_username: str
-    xui_password: str
-    inbound_port: int
-    idTypeVPN: int
-    idCountry: int
-    is_active: bool
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: int):
+    return await rq.admin_delete_user(user_id)
 
 
-class ServerUpdate(ServerCreate):
-    pass
 
 # ======================
 # ADMIN: TYPES
 # ======================
 
+class TypeVPNCreate(BaseModel):
+    nameType: str
+    descriptionType: str
+    
 @app.get("/api/admin/types")
 async def admin_get_types():
     return await rq.admin_get_types()
@@ -426,6 +410,9 @@ async def admin_delete_type(type_id: int):
 # ADMIN: COUNTRIES
 # ======================
 
+class CountryCreate(BaseModel):
+    nameCountry: str
+
 @app.get("/api/admin/countries")
 async def admin_get_countries():
     return await rq.admin_get_countries()
@@ -451,6 +438,24 @@ async def admin_delete_country(country_id: int):
 # ======================
 # ADMIN: SERVERS
 # ======================
+
+class ServerCreate(BaseModel):
+    nameVPN: str
+    price_usdt: Decimal
+    max_conn: int
+    server_ip: str
+    api_url: str
+    api_token: str
+    xui_username: str
+    xui_password: str
+    inbound_port: int
+    idTypeVPN: int
+    idCountry: int
+    is_active: bool
+
+
+class ServerUpdate(ServerCreate):
+    pass
 
 @app.get("/api/admin/servers")
 async def admin_get_servers():
@@ -503,6 +508,14 @@ class TariffUpdate(TariffCreate):
 @app.get("/api/admin/tariffs/{server_id}")
 async def admin_get_tariffs(server_id: int):
     return await rq.get_server_tariffs(server_id)
+
+# --- ПОЛУЧЕНИЕ ТАРИФОВ СЕРВЕРА --- 
+@app.get("/api/vpn/tariffs/{server_id}")
+async def get_tariffs(server_id: int):
+    try:
+        return await rq.get_server_tariffs(server_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/admin/tariffs")
 async def admin_add_tariff(data: TariffCreate):
@@ -616,10 +629,3 @@ async def get_referrals(
     return await rq.get_referrals_list(tg_id)
 
 
-# --- ПОЛУЧЕНИЕ ТАРИФОВ СЕРВЕРА --- 
-@app.get("/api/vpn/tariffs/{server_id}")
-async def get_tariffs(server_id: int):
-    try:
-        return await rq.get_server_tariffs(server_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

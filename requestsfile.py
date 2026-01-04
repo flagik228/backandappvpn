@@ -32,7 +32,7 @@ async def add_user(tg_id: int, user_role: str = "user", referrer_id: int | None 
         await session.commit()
         await session.refresh(user)
         return user
-
+    
 
 async def get_user_wallet(tg_id: int):
     async with async_session() as session:
@@ -44,38 +44,8 @@ async def get_user_wallet(tg_id: int):
         return {
             "balance_usdt": str(wallet.balance_usdt)
         }
-
-# =======================
-# --- REFERRALS ---
-# =======================
-async def get_referrals_count(tg_id: int) -> int:
-    async with async_session() as session:
-        user = await session.scalar(
-            select(User).where(User.tg_id == tg_id)
-        )
-        if not user:
-            return 0
-
-        count = await session.scalar(
-            select(func.count())
-            .select_from(User)
-            .where(User.referrer_id == user.idUser)
-        )
-        return count or 0
-
-
-async def get_referrals_list(tg_id: int):
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        if not user:
-            return []
-
-        referrals = await session.scalars(select(User).where(User.referrer_id == user.idUser))
-        return [{
-            "tg_id": r.tg_id,
-            "created_at": r.created_at.isoformat()
-        } for r in referrals]
-
+        
+    
 # =======================
 # --- SERVERS ---
 # =======================
@@ -142,7 +112,38 @@ async def get_servers_full():
                 "tariffs": tariffs_list
             })
         return result
+    
+    
+# =======================
+# --- REFERRALS ---
+# =======================
+async def get_referrals_count(tg_id: int) -> int:
+    async with async_session() as session:
+        user = await session.scalar(
+            select(User).where(User.tg_id == tg_id)
+        )
+        if not user:
+            return 0
 
+        count = await session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(User.referrer_id == user.idUser)
+        )
+        return count or 0
+
+
+async def get_referrals_list(tg_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            return []
+
+        referrals = await session.scalars(select(User).where(User.referrer_id == user.idUser))
+        return [{
+            "tg_id": r.tg_id,
+            "created_at": r.created_at.isoformat()
+        } for r in referrals]
 
 
 # =====================================================================
@@ -413,12 +414,15 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
                 "status": sub.status
             })
         return result
+
     
-    
+
+# --- ADMIN ------------------------------------------------------------
+
 # =======================
 # --- ADMIN: USERS ---
 # =======================
-
+        
 async def admin_get_users():
     async with async_session() as session:
         users = await session.scalars(select(User))
@@ -426,13 +430,47 @@ async def admin_get_users():
             "idUser": u.idUser,
             "tg_id": u.tg_id,
             "userRole": u.userRole,
-            "referrer_id": u.referrer_id
+            "referrer_id": u.referrer_id,
+            "created_at": u.created_at.isoformat()
         } for u in users]
 
 
+async def admin_update_user(user_id: int, userRole: str):
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        user.userRole = userRole
+        await session.commit()
+        return {"status": "ok"}
+
+
+async def admin_delete_user(user_id: int):
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        await session.delete(user)
+        await session.commit()
+        return {"status": "ok"}
+        
+        
 # =======================
-# --- ADMIN: TYPES ---
+# --- ADMIN: UserWallet ---
 # =======================
+
+# =======================
+# --- ADMIN: WalletTransaction ---
+# =======================
+
+
+
+
+# =========================================================
+# --- ADMIN: TYPES VPN (CRUD)
+# =========================================================
 
 async def admin_get_types():
     async with async_session() as session:
@@ -442,53 +480,8 @@ async def admin_get_types():
             "nameType": t.nameType,
             "descriptionType": t.descriptionType
         } for t in types]
-
-
-# =======================
-# --- ADMIN: COUNTRIES ---
-# =======================
-
-async def admin_get_countries():
-    async with async_session() as session:
-        countries = await session.scalars(select(CountriesVPN))
-        return [{
-            "idCountry": c.idCountry,
-            "nameCountry": c.nameCountry
-        } for c in countries]
-
-
-# =======================
-# --- ADMIN: SERVERS ---
-# =======================
-
-async def admin_get_servers():
-    async with async_session() as session:
-        servers = await session.scalars(select(ServersVPN))
-        result = []
-        for s in servers:
-            result.append({
-                "idServerVPN": s.idServerVPN,
-                "nameVPN": s.nameVPN,
-                "price_usdt": str(s.price_usdt),
-                "max_conn": s.max_conn,
-                "now_conn": s.now_conn,
-                "server_ip": s.server_ip,
-                "api_url": s.api_url,
-                "api_token": s.api_token,
-                "xui_username": s.xui_username,
-                "xui_password": s.xui_password,
-                "inbound_port": s.inbound_port,
-                "is_active": s.is_active,
-                "idTypeVPN": s.idTypeVPN,
-                "idCountry": s.idCountry
-            })
-        return result
-
-
-# =========================================================
-# --- ADMIN: TYPES VPN (CRUD)
-# =========================================================
-
+        
+        
 async def admin_add_type(nameType: str, descriptionType: str):
     if not nameType or not descriptionType:
         raise ValueError("nameType и descriptionType обязательны")
@@ -532,10 +525,20 @@ async def admin_delete_type(type_id: int):
         return {"status": "ok"}
 
 
+
 # =========================================================
 # --- ADMIN: COUNTRIES VPN (CRUD)
 # =========================================================
 
+async def admin_get_countries():
+    async with async_session() as session:
+        countries = await session.scalars(select(CountriesVPN))
+        return [{
+            "idCountry": c.idCountry,
+            "nameCountry": c.nameCountry
+        } for c in countries]
+        
+        
 async def admin_add_country(nameCountry: str):
     if not nameCountry:
         raise ValueError("nameCountry обязателен")
@@ -573,70 +576,37 @@ async def admin_delete_country(country_id: int):
         await session.delete(c)
         await session.commit()
         return {"status": "ok"}
-
-
-# =========================================================
-# --- ADMIN: EXCHANGE RATES (CRUD)
-# =========================================================
-
-from models import ExchangeRate
-
-async def admin_get_exchange_rates():
-    async with async_session() as session:
-        rates = await session.scalars(select(ExchangeRate))
-        return [{
-            "id": r.id,
-            "currency": r.currency,
-            "rate_to_usdt": str(r.rate_to_usdt),
-            "updated_at": r.updated_at.isoformat()
-        } for r in rates]
-
-
-async def admin_add_exchange_rate(currency: str, rate_to_usdt: Decimal):
-    async with async_session() as session:
-        rate = ExchangeRate(currency=currency,rate_to_usdt=rate_to_usdt)
-        
-        session.add(rate)
-        await session.commit()
-        await session.refresh(rate)
-        return {
-            "id": rate.id,
-            "currency": rate.currency,
-            "rate_to_usdt": str(rate.rate_to_usdt)
-        }
-
-
-async def admin_update_exchange_rate(rate_id: int, rate_to_usdt: Decimal):
-    async with async_session() as session:
-        rate = await session.get(ExchangeRate, rate_id)
-        if not rate:
-            raise ValueError("ExchangeRate не найден")
-
-        await session.execute(update(ExchangeRate).where(ExchangeRate.id == rate_id)
-            .values(
-                rate_to_usdt=rate_to_usdt,
-                updated_at=datetime.utcnow()
-            )
-        )
-        await session.commit()
-        return {"status": "ok"}
-
-
-async def admin_delete_exchange_rate(rate_id: int):
-    async with async_session() as session:
-        rate = await session.get(ExchangeRate, rate_id)
-        if not rate:
-            raise ValueError("ExchangeRate не найден")
-
-        await session.delete(rate)
-        await session.commit()
-        return {"status": "ok"}
-
-
+    
+    
+    
 # =========================================================
 # --- ADMIN: SERVERS VPN (CRUD)
 # =========================================================
 
+async def admin_get_servers():
+    async with async_session() as session:
+        servers = await session.scalars(select(ServersVPN))
+        result = []
+        for s in servers:
+            result.append({
+                "idServerVPN": s.idServerVPN,
+                "nameVPN": s.nameVPN,
+                "price_usdt": str(s.price_usdt),
+                "max_conn": s.max_conn,
+                "now_conn": s.now_conn,
+                "server_ip": s.server_ip,
+                "api_url": s.api_url,
+                "api_token": s.api_token,
+                "xui_username": s.xui_username,
+                "xui_password": s.xui_password,
+                "inbound_port": s.inbound_port,
+                "is_active": s.is_active,
+                "idTypeVPN": s.idTypeVPN,
+                "idCountry": s.idCountry
+            })
+        return result
+    
+    
 async def admin_add_server(data):
     async with async_session() as session:
         server = ServersVPN(
@@ -700,7 +670,76 @@ async def admin_delete_server(server_id: int):
         await session.delete(server)
         await session.commit()
         return {"status": "ok"}
+
+
+
+# =========================================================
+# --- ADMIN: Tariff
+# =========================================================
+
+
+
+
+# =========================================================
+# --- ADMIN: EXCHANGE RATES (CRUD)
+# =========================================================
+
+from models import ExchangeRate
+
+async def admin_get_exchange_rates():
+    async with async_session() as session:
+        rates = await session.scalars(select(ExchangeRate))
+        return [{
+            "id": r.id,
+            "currency": r.currency,
+            "rate_to_usdt": str(r.rate_to_usdt),
+            "updated_at": r.updated_at.isoformat()
+        } for r in rates]
+
+
+async def admin_add_exchange_rate(currency: str, rate_to_usdt: Decimal):
+    async with async_session() as session:
+        rate = ExchangeRate(currency=currency,rate_to_usdt=rate_to_usdt)
+        
+        session.add(rate)
+        await session.commit()
+        await session.refresh(rate)
+        return {
+            "id": rate.id,
+            "currency": rate.currency,
+            "rate_to_usdt": str(rate.rate_to_usdt)
+        }
+
+
+async def admin_update_exchange_rate(rate_id: int, rate_to_usdt: Decimal):
+    async with async_session() as session:
+        rate = await session.get(ExchangeRate, rate_id)
+        if not rate:
+            raise ValueError("ExchangeRate не найден")
+
+        await session.execute(update(ExchangeRate).where(ExchangeRate.id == rate_id)
+            .values(
+                rate_to_usdt=rate_to_usdt,
+                updated_at=datetime.utcnow()
+            )
+        )
+        await session.commit()
+        return {"status": "ok"}
+
+
+async def admin_delete_exchange_rate(rate_id: int):
+    async with async_session() as session:
+        rate = await session.get(ExchangeRate, rate_id)
+        if not rate:
+            raise ValueError("ExchangeRate не найден")
+
+        await session.delete(rate)
+        await session.commit()
+        return {"status": "ok"}
     
+    
+    
+
 # =======================
 # --- GET TARIFFS ---
 # =======================
@@ -714,5 +753,35 @@ async def get_server_tariffs(server_id: int):
             "days": t.days,
             "price_usdt": str(t.price_tarif)
         } for t in tariffs]
+    
+    
+    
+# =========================================================
+# --- ADMIN: Order
+# =========================================================
+
+
+# =========================================================
+# --- ADMIN: Payment
+# =========================================================
+
+# =========================================================
+# --- ADMIN: VPNKey
+# =========================================================
+
+# =========================================================
+# --- ADMIN: VPNSubscription
+# =========================================================
+
+# =========================================================
+# --- ADMIN: ReferralConfig
+# =========================================================
+
+# =========================================================
+# --- ADMIN: ReferralEarning
+# =========================================================
+
+
+
         
 

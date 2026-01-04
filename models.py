@@ -42,7 +42,6 @@ class User(Base):
     # внутрений баланс пользователя
 class UserWallet(Base):
     __tablename__ = "user_wallets"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"),unique=True)
     balance_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0.0"))
@@ -52,13 +51,10 @@ class UserWallet(Base):
     # история транзакций баланса
 class WalletTransaction(Base):
     __tablename__ = "wallet_transactions"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     wallet_id: Mapped[int] = mapped_column(ForeignKey("user_wallets.id", ondelete="CASCADE"))
-
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 6))
     type: Mapped[str] = mapped_column(String(100))  # referral / deposit / withdrawal
-
     description: Mapped[str] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -102,7 +98,6 @@ class ServersVPN(Base):
     # тарифы
 class Tariff(Base):
     __tablename__ = "tariffs"
-
     idTarif: Mapped[int] = mapped_column(primary_key=True)
     server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN", ondelete="CASCADE"))
     days: Mapped[int] = mapped_column(Integer)  # 1, 7, 14, 30
@@ -114,7 +109,6 @@ class Tariff(Base):
     # курс stars
 class ExchangeRate(Base):
     __tablename__ = "exchange_rates"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     pair: Mapped[str] = mapped_column(String(50), unique=True)  # "XTR_USDT"
     rate: Mapped[Decimal] = mapped_column(Numeric(18, 8))   # 0.01301886
@@ -124,7 +118,6 @@ class ExchangeRate(Base):
     # заказы
 class Order(Base):
     __tablename__ = "orders"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser"))
     server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN"))
@@ -138,12 +131,9 @@ class Order(Base):
     # оплата заказа
 class Payment(Base):
     __tablename__ = "payments"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
-
     provider: Mapped[str] = mapped_column(String(100))  # stars / cryptobot
-
     provider_payment_id: Mapped[str] = mapped_column(String(200))   # ID платежа у платёжного провайдера.
     status: Mapped[str] = mapped_column(String(30))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
@@ -155,11 +145,9 @@ class VPNKey(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser"))
     idServerVPN: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN"))
-
     provider: Mapped[str] = mapped_column(String(200))
     provider_key_id: Mapped[str] = mapped_column(String(200))
     access_data: Mapped[str] = mapped_column(String(500))
-
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -171,7 +159,6 @@ class VPNSubscription(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser"))
     vpn_key_id: Mapped[int] = mapped_column(ForeignKey("vpn_keys.id"))
-
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     status: Mapped[str] = mapped_column(String(30), default="active")
@@ -180,7 +167,6 @@ class VPNSubscription(Base):
     # конфиг для рефералки
 class ReferralConfig(Base):
     __tablename__ = "referral_config"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     percent: Mapped[int] = mapped_column(Integer)  # 5 = 5%
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -189,13 +175,11 @@ class ReferralConfig(Base):
     # реферальные начисления
 class ReferralEarning(Base):
     __tablename__ = "referral_earnings"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     referrer_id: Mapped[int] = mapped_column(ForeignKey("users.idUser"))
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"))
     percent: Mapped[int] = mapped_column(Integer)
     amount_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6))
-
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     
 async def init_db():
