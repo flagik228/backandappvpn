@@ -475,6 +475,9 @@ async def admin_get_servers():
                 "server_ip": s.server_ip,
                 "api_url": s.api_url,
                 "api_token": s.api_token,
+                "xui_username": s.xui_username,
+                "xui_password": s.xui_password,
+                "inbound_port": s.inbound_port,
                 "is_active": s.is_active,
                 "idTypeVPN": s.idTypeVPN,
                 "idCountry": s.idCountry
