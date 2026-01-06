@@ -13,13 +13,9 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 
 import requestsfile as rq
+import adminrequests as rqadm
 from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui
 from models import init_db, async_session, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet
-
-
-# ======================
-# CONFIG
-# ======================
 
 BOT_TOKEN = "8423828272:AAHGuxxQEvTELPukIXl2eNL3p25fI9GGx0U"
 WEBHOOK_PATH = "/webhook"
@@ -31,7 +27,6 @@ dp = Dispatcher()
 # ======================
 # APP
 # ======================
-
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     await init_db()
@@ -46,7 +41,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 # ======================
 # TELEGRAM WEBHOOK
 # ======================
-
 @app.post(WEBHOOK_PATH)
 async def telegram_webhook(request: Request):
     update = Update.model_validate(await request.json(), context={"bot": bot})
@@ -56,7 +50,6 @@ async def telegram_webhook(request: Request):
 # ======================
 # TELEGRAM HANDLERS
 # ======================
-
 @dp.pre_checkout_query()
 async def pre_checkout(q: PreCheckoutQuery):
     await q.answer(ok=True)
@@ -287,8 +280,6 @@ async def create_order_endpoint(data: OrderRequest):
     
 
 
-
-
 # ======================
 # PUBLIC
 # ======================
@@ -297,10 +288,34 @@ async def create_order_endpoint(data: OrderRequest):
 async def get_servers():
     return await rq.get_servers()
 
-
 @app.get("/api/vpn/my/{tg_id}")
 async def my_vpns(tg_id: int):
     return await rq.get_my_vpns(tg_id)
+
+# получение тарифов сервера
+@app.get("/api/vpn/tariffs/{server_id}")
+async def get_tariffs(server_id: int):
+    try:
+        return await rq.get_server_tariffs(server_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+# REFERRALS
+# ======================
+@app.get("/api/admin/referrals-count/{tg_id}")
+async def get_referrals_count(
+    tg_id: int = Path(..., description="TG ID пользователя")
+):
+    count = await rq.get_referrals_count(tg_id)
+    return {"count": count}
+
+
+@app.get("/api/admin/referrals/{tg_id}")
+async def get_referrals(
+    tg_id: int = Path(..., description="TG ID пользователя")
+):
+    return await rq.get_referrals_list(tg_id)
 
 # ======================
 # REGISTER
@@ -331,114 +346,164 @@ async def register_user(data: RegisterUser):
             if ref_user:
                 referrer_id = ref_user.idUser
         # 🔐 ВСЕГДА user
-        new_user = User(
-            tg_id=data.tg_id,
-            userRole="user",
-            referrer_id=referrer_id
-        )
+        new_user = User(tg_id=data.tg_id, userRole="user", referrer_id=referrer_id)
         session.add(new_user)
         await session.commit()
         await session.refresh(new_user)
-        return {
-            "status": "ok",
-            "idUser": new_user.idUser,
-            "referrer_id": referrer_id
+        return {"status": "ok", "idUser": new_user.idUser, "referrer_id": referrer_id
         }
 
-# ========================================================================================
+
+
+
+
+
+# =========================================================================================================================================
 # ADMIN MODELS
 # ======================
 
 # ======================
 # ADMIN: USERS
 # ======================
+class AdminUserUpdate(BaseModel):
+    userRole: str
+
+class AdminUserCreate(BaseModel):
+    tg_id: int
+    userRole: str = "user"
+    referrer_id: int | None = None
 
 class AdminUserUpdate(BaseModel):
     userRole: str
 
-@app.get("/api/admin/users")
-async def admin_users():
-    return await rq.admin_get_users()
 
+@app.get("/api/admin/users")
+async def admin_get_users():
+    return await rqadm.admin_get_users()
+
+@app.post("/api/admin/users")
+async def admin_add_user(data: AdminUserCreate):
+    return await rqadm.admin_add_user(tg_id=data.tg_id, userRole=data.userRole, referrer_id=data.referrer_id)
 
 @app.patch("/api/admin/users/{user_id}")
 async def admin_update_user(user_id: int, data: AdminUserUpdate):
-    return await rq.admin_update_user(user_id, data.userRole)
-
+    return await rqadm.admin_update_user(user_id, data.userRole)
 
 @app.delete("/api/admin/users/{user_id}")
 async def admin_delete_user(user_id: int):
-    return await rq.admin_delete_user(user_id)
+    return await rqadm.admin_delete_user(user_id)
 
+
+# ======================
+# ADMIN: WALLETS
+# ======================
+class WalletCreate(BaseModel):
+    idUser: int
+    balance_usdt: Decimal = Decimal("0.0")
+
+class WalletUpdate(BaseModel):
+    balance_usdt: Decimal
+
+
+@app.get("/api/admin/wallets")
+async def admin_get_wallets():
+    return await rqadm.admin_get_wallets()
+
+@app.post("/api/admin/wallets")
+async def admin_add_wallet(data: WalletCreate):
+    return await rqadm.admin_add_wallet(data.idUser, data.balance_usdt)
+
+@app.patch("/api/admin/wallets/{wallet_id}")
+async def admin_update_wallet(wallet_id: int, data: WalletUpdate):
+    return await rqadm.admin_update_wallet(wallet_id, data.balance_usdt)
+
+@app.delete("/api/admin/wallets/{wallet_id}")
+async def admin_delete_wallet(wallet_id: int):
+    return await rqadm.admin_delete_wallet(wallet_id)
+
+
+# ======================
+# ADMIN: WALLET TRANSACTIONS
+# ======================
+class WalletTransactionCreate(BaseModel):
+    wallet_id: int
+    amount: Decimal
+    type_: str
+    description: str | None = None
+
+class WalletTransactionUpdate(BaseModel):
+    amount: Decimal
+    type_: str
+    description: str | None = None
+
+
+@app.get("/api/admin/wallet-transactions")
+async def admin_get_wallet_transactions():
+    return await rqadm.admin_get_wallet_transactions()
+
+@app.post("/api/admin/wallet-transactions")
+async def admin_add_wallet_transaction(data: WalletTransactionCreate):
+    return await rqadm.admin_add_wallet_transaction(data.wallet_id, data.amount, data.type_, data.description)
+
+@app.patch("/api/admin/wallet-transactions/{tx_id}")
+async def admin_update_wallet_transaction(tx_id: int, data: WalletTransactionUpdate):
+    return await rqadm.admin_update_wallet_transaction(tx_id, data.amount, data.type_, data.description)
+
+@app.delete("/api/admin/wallet-transactions/{tx_id}")
+async def admin_delete_wallet_transaction(tx_id: int):
+    return await rqadm.admin_delete_wallet_transaction(tx_id)
 
 
 # ======================
 # ADMIN: TYPES
 # ======================
-
 class TypeVPNCreate(BaseModel):
     nameType: str
     descriptionType: str
     
 @app.get("/api/admin/types")
 async def admin_get_types():
-    return await rq.admin_get_types()
-
+    return await rqadm.admin_get_types()
 
 @app.post("/api/admin/types")
 async def admin_add_type(data: TypeVPNCreate):
-    return await rq.admin_add_type(
-        data.nameType,
-        data.descriptionType
-    )
-
+    return await rqadm.admin_add_type(data.nameType, data.descriptionType)
 
 @app.patch("/api/admin/types/{type_id}")
 async def admin_update_type(type_id: int, data: TypeVPNCreate):
-    return await rq.admin_update_type(
-        type_id,
-        data.nameType,
-        data.descriptionType
-    )
-
+    return await rqadm.admin_update_type(type_id, data.nameType, data.descriptionType)
 
 @app.delete("/api/admin/types/{type_id}")
 async def admin_delete_type(type_id: int):
-    return await rq.admin_delete_type(type_id)
+    return await rqadm.admin_delete_type(type_id)
+
 
 # ======================
 # ADMIN: COUNTRIES
 # ======================
-
 class CountryCreate(BaseModel):
     nameCountry: str
 
 @app.get("/api/admin/countries")
 async def admin_get_countries():
-    return await rq.admin_get_countries()
-
+    return await rqadm.admin_get_countries()
 
 @app.post("/api/admin/countries")
 async def admin_add_country(data: CountryCreate):
-    return await rq.admin_add_country(data.nameCountry)
-
+    return await rqadm.admin_add_country(data.nameCountry)
 
 @app.patch("/api/admin/countries/{country_id}")
 async def admin_update_country(country_id: int, data: CountryCreate):
-    return await rq.admin_update_country(
-        country_id,
-        data.nameCountry
-    )
-
+    return await rqadm.admin_update_country(country_id, data.nameCountry)
 
 @app.delete("/api/admin/countries/{country_id}")
 async def admin_delete_country(country_id: int):
-    return await rq.admin_delete_country(country_id)
+    return await rqadm.admin_delete_country(country_id)
+
 
 # ======================
 # ADMIN: SERVERS
 # ======================
-
 class ServerCreate(BaseModel):
     nameVPN: str
     price_usdt: Decimal
@@ -453,45 +518,29 @@ class ServerCreate(BaseModel):
     idCountry: int
     is_active: bool
 
-
 class ServerUpdate(ServerCreate):
     pass
 
 @app.get("/api/admin/servers")
 async def admin_get_servers():
-    return await rq.admin_get_servers()
+    return await rqadm.admin_get_servers()
 
 @app.post("/api/admin/servers")
 async def admin_add_server(server: ServerCreate):
-    return await rq.admin_add_server(server)
+    return await rqadm.admin_add_server(server)
 
 @app.patch("/api/admin/servers/{server_id}")
-async def admin_update_server(server_id: int, server: ServerUpdate):
-    # конвертация Pydantic в словарь с нужными типами
-    server_data = {
-        "nameVPN": server.nameVPN,
-        "price_usdt": Decimal(server.price_usdt),
-        "max_conn": server.max_conn,
-        "server_ip": server.server_ip,
-        "api_url": server.api_url,
-        "api_token": server.api_token,
-        "xui_username": server.xui_username,
-        "xui_password": server.xui_password,
-        "inbound_port": server.inbound_port,
-        "is_active": bool(server.is_active),
-        "idTypeVPN": server.idTypeVPN,
-        "idCountry": server.idCountry
-    }
-    return await rq.admin_update_server(server_id, server_data)
+async def admin_update_server(server_id: int, data: ServerCreate):
+    return await rqadm.admin_update_server(server_id, data.dict())
 
 @app.delete("/api/admin/servers/{server_id}")
 async def admin_delete_server(server_id: int):
-    return await rq.admin_delete_server(server_id)
-
+    return await rqadm.admin_delete_server(server_id)
 
 @app.get("/api/vpn/servers-full")
 async def get_servers_full():
     return await rq.get_servers_full()
+
 
 # ======================
 # ADMIN: TARIFF
@@ -505,127 +554,241 @@ class TariffCreate(BaseModel):
 class TariffUpdate(TariffCreate):
     pass
 
+
 @app.get("/api/admin/tariffs/{server_id}")
 async def admin_get_tariffs(server_id: int):
-    return await rq.get_server_tariffs(server_id)
-
-# --- ПОЛУЧЕНИЕ ТАРИФОВ СЕРВЕРА --- 
-@app.get("/api/vpn/tariffs/{server_id}")
-async def get_tariffs(server_id: int):
-    try:
-        return await rq.get_server_tariffs(server_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return await rqadm.admin_get_tariffs(server_id)
 
 @app.post("/api/admin/tariffs")
 async def admin_add_tariff(data: TariffCreate):
-    async with async_session() as session:
-        tariff = Tariff(
-            server_id=data.server_id,
-            days=data.days,
-            price_tarif=data.price_tarif,
-            is_active=data.is_active
-        )
-        session.add(tariff)
-        await session.commit()
-        await session.refresh(tariff)
-        return {
-            "idTarif": tariff.idTarif,
-            "server_id": tariff.server_id,
-            "days": tariff.days,
-            "price_tarif": str(tariff.price_tarif),
-            "is_active": tariff.is_active
-        }
+    return await rqadm.admin_add_tariff(data.server_id, data.days, data.price_tarif, data.is_active)
 
 @app.patch("/api/admin/tariffs/{tariff_id}")
-async def admin_update_tariff(tariff_id: int, data: TariffUpdate):
-    async with async_session() as session:
-        tariff = await session.get(Tariff, tariff_id)
-        if not tariff:
-            raise HTTPException(status_code=404, detail="Tariff not found")
-        await session.execute(update(Tariff).where(Tariff.idTarif == tariff_id).values(
-            server_id=data.server_id,
-            days=data.days,
-            price_tarif=data.price_tarif,
-            is_active=data.is_active
-        ))
-        await session.commit()
-        return {"status": "ok"}
+async def admin_update_tariff(tariff_id: int, data: TariffCreate):
+    return await rqadm.admin_update_tariff(tariff_id, data.days, data.price_tarif, data.is_active)
 
 @app.delete("/api/admin/tariffs/{tariff_id}")
 async def admin_delete_tariff(tariff_id: int):
-    async with async_session() as session:
-        tariff = await session.get(Tariff, tariff_id)
-        if not tariff:
-            raise HTTPException(status_code=404, detail="Tariff not found")
-        await session.delete(tariff)
-        await session.commit()
-        return {"status": "ok"}
-    
+    return await rqadm.admin_delete_tariff(tariff_id)
+
+
 # ======================
 # ADMIN: ExchangeRate
 # ======================
 class ExchangeRateCreate(BaseModel):
     rate: Decimal
+    rate_to_usdt: Decimal
     
-@app.get("/api/admin/exchange-rate/{pair}")
-async def get_exchange_rate(pair: str):
-    async with async_session() as session:
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == pair)
-        )
-        if not rate:
-            return None
+@app.get("/api/admin/exchange-rates")
+async def admin_get_exchange_rates():
+    return await rqadm.admin_get_exchange_rates()
 
-        return {
-            "pair": rate.pair,
-            "rate": float(rate.rate),
-            "updated_at": rate.updated_at.isoformat()
-        }
+@app.post("/api/admin/exchange-rates")
+async def admin_add_exchange_rate(data: ExchangeRateCreate):
+    return await rqadm.admin_add_exchange_rate(data.currency,data.rate_to_usdt)
 
+@app.patch("/api/admin/exchange-rates/{rate_id}")
+async def admin_update_exchange_rate(rate_id: int, data: ExchangeRateCreate):
+    return await rqadm.admin_update_exchange_rate(rate_id, data.rate_to_usdt)
 
-@app.patch("/api/admin/exchange-rate/{pair}")
-async def set_exchange_rate(pair: str, data: ExchangeRateCreate):
-    async with async_session() as session:
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == pair)
-        )
-
-        if rate is None:
-            rate = ExchangeRate(
-                pair=pair,
-                rate=data.rate
-            )
-            session.add(rate)
-        else:
-            rate.rate = data.rate
-            rate.updated_at = datetime.utcnow()
-
-        await session.commit()
-
-        return {
-            "pair": pair,
-            "rate": float(rate.rate)
-        }
+@app.delete("/api/admin/exchange-rates/{rate_id}")
+async def admin_delete_exchange_rate(rate_id: int):
+    return await rqadm.admin_delete_exchange_rate(rate_id)
 
 
 
 # ======================
-# REFERRALS
+# ADMIN: Order
 # ======================
+class OrderCreate(BaseModel):
+    idUser: int
+    server_id: int
+    idTarif: int
+    amount: int
+    currency: str
+    status: str = "pending"
 
-@app.get("/api/admin/referrals-count/{tg_id}")
-async def get_referrals_count(
-    tg_id: int = Path(..., description="TG ID пользователя")
-):
-    count = await rq.get_referrals_count(tg_id)
-    return {"count": count}
+class OrderUpdateStatus(BaseModel):
+    status: str
+   
+
+@app.get("/api/admin/orders")
+async def admin_get_orders():
+    return await rqadm.admin_get_orders()
+
+@app.post("/api/admin/orders")
+async def admin_add_order(data: OrderCreate):
+    return await rqadm.admin_add_order(idUser=data.idUser, server_id=data.server_id, idTarif=data.idTarif,
+        amount=data.amount,
+        currency=data.currency,
+        status=data.status
+    )
+
+@app.patch("/api/admin/orders/{order_id}")
+async def admin_update_order(order_id: int, data: OrderUpdateStatus):
+    return await rqadm.admin_update_order_status(order_id, data.status)
+
+@app.delete("/api/admin/orders/{order_id}")
+async def admin_delete_order(order_id: int):
+    return await rqadm.admin_delete_order(order_id)
 
 
-@app.get("/api/admin/referrals/{tg_id}")
-async def get_referrals(
-    tg_id: int = Path(..., description="TG ID пользователя")
-):
-    return await rq.get_referrals_list(tg_id)
+
+# ======================
+# ADMIN: Paynent
+# ======================
+class PaymentCreate(BaseModel):
+    order_id: int
+    provider: str
+    provider_payment_id: str
+    status: str
+
+class PaymentUpdate(BaseModel):
+    status: str
+
+
+@app.get("/api/admin/payments")
+async def admin_get_payments():
+    return await rqadm.admin_get_payments()
+
+@app.post("/api/admin/payments")
+async def admin_add_payment(data: PaymentCreate):
+    return await rqadm.admin_add_payment(order_id=data.order_id, provider=data.provider, provider_payment_id=data.provider_payment_id, status=data.status)
+
+@app.patch("/api/admin/payments/{payment_id}")
+async def admin_update_payment(payment_id: int, data: PaymentUpdate):
+    return await rqadm.admin_update_payment(payment_id, data.status)
+
+@app.delete("/api/admin/payments/{payment_id}")
+async def admin_delete_payment(payment_id: int):
+    return await rqadm.admin_delete_payment(payment_id)
+
+
+
+# ======================
+# ADMIN: VPN KEYS
+# ======================
+class VPNKeyCreate(BaseModel):
+    idUser: int
+    idServerVPN: int
+    provider: str
+    provider_key_id: str
+    access_data: str
+    expires_at: datetime
+    is_active: bool = True
+
+class VPNKeyUpdate(BaseModel):
+    expires_at: datetime
+    is_active: bool
+
+
+@app.get("/api/admin/vpn-keys")
+async def admin_get_vpn_keys():
+    return await rqadm.admin_get_vpn_keys()
+
+@app.post("/api/admin/vpn-keys")
+async def admin_add_vpn_key(data: VPNKeyCreate):
+    return await rqadm.admin_add_vpn_key(data.idUser, data.idServerVPN, data.provider, data.provider_key_id, data.access_data, data.expires_at, data.is_active)
+
+@app.patch("/api/admin/vpn-keys/{key_id}")
+async def admin_update_vpn_key(key_id: int, data: VPNKeyUpdate):
+    return await rqadm.admin_update_vpn_key(key_id, data.expires_at, data.is_active)
+
+@app.delete("/api/admin/vpn-keys/{key_id}")
+async def admin_delete_vpn_key(key_id: int):
+    return await rqadm.admin_delete_vpn_key(key_id)
+
+
+# ======================
+# ADMIN: VPN SUBSCRIPTIONS
+# ======================
+class VPNSubscriptionCreate(BaseModel):
+    idUser: int
+    vpn_key_id: int
+    expires_at: datetime
+    status: str = "active"
+
+class VPNSubscriptionUpdate(BaseModel):
+    expires_at: datetime
+    status: str
+
+
+@app.get("/api/admin/vpn-subscriptions")
+async def admin_get_vpn_subscriptions():
+    return await rqadm.admin_get_vpn_subscriptions()
+
+@app.post("/api/admin/vpn-subscriptions")
+async def admin_add_vpn_subscription(data: VPNSubscriptionCreate):
+    return await rqadm.admin_add_vpn_subscription(data.idUser, data.vpn_key_id, data.expires_at, data.status)
+
+@app.patch("/api/admin/vpn-subscriptions/{sub_id}")
+async def admin_update_vpn_subscription(sub_id: int, data: VPNSubscriptionUpdate):
+    return await rqadm.admin_update_vpn_subscription(sub_id, data.status)
+
+@app.delete("/api/admin/vpn-subscriptions/{sub_id}")
+async def admin_delete_vpn_subscription(sub_id: int):
+    return await rqadm.admin_delete_vpn_subscription(sub_id)
+
+
+# ======================
+# ADMIN: ReferralConfig
+# ======================
+class ReferralConfigCreate(BaseModel):
+    percent: int
+    is_active: bool = True
+
+class ReferralConfigUpdate(BaseModel):
+    percent: int
+    is_active: bool
+
+
+@app.get("/api/admin/referral-config")
+async def admin_get_referral_config():
+    return await rqadm.admin_get_referral_config()
+
+@app.post("/api/admin/referral-config")
+async def admin_add_referral_config(data: ReferralConfigCreate):
+    return await rqadm.admin_add_referral_config(data.percent, data.is_active)
+
+@app.patch("/api/admin/referral-config/{config_id}")
+async def admin_update_referral_config(config_id: int, data: ReferralConfigUpdate):
+    return await rqadm.admin_update_referral_config(config_id, data.percent, data.is_active)
+
+@app.delete("/api/admin/referral-config/{config_id}")
+async def admin_delete_referral_config(config_id: int):
+    return await rqadm.admin_delete_referral_config(config_id)
+
+
+# ======================
+# ADMIN: ReferralEarning
+# ======================
+class ReferralEarningCreate(BaseModel):
+    referrer_id: int
+    order_id: int
+    percent: int
+    amount_usdt: Decimal
+
+class ReferralEarningUpdate(BaseModel):
+    percent: int
+    amount_usdt: Decimal
+
+
+@app.get("/api/admin/referral-earnings")
+async def admin_get_referral_earnings():
+    return await rqadm.admin_get_referral_earnings()
+
+@app.post("/api/admin/referral-earnings")
+async def admin_add_referral_earning(data: ReferralEarningCreate):
+    return await rqadm.admin_add_referral_earning(data.referrer_id, data.order_id, data.percent, data.amount_usdt)
+
+@app.patch("/api/admin/referral-earnings/{earning_id}")
+async def admin_update_referral_earning(earning_id: int, data: ReferralEarningUpdate):
+    return await rqadm.admin_update_referral_earning(earning_id, data.percent, data.amount_usdt)
+
+@app.delete("/api/admin/referral-earnings/{earning_id}")
+async def admin_delete_referral_earning(earning_id: int):
+    return await rqadm.admin_delete_referral_earning(earning_id)
+
+
 
 

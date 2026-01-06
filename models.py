@@ -21,8 +21,6 @@ DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT
 
 engine = create_async_engine(url=DATABASE_URL, echo=True)
 
-# engine = create_async_engine(url='postgresql+asyncpg://vpn_user:Korga_2000@localhost:5432/vpn_base', echo = True)
-
 async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
 
 class Base(AsyncAttrs, DeclarativeBase):
