@@ -127,7 +127,7 @@ async def sync_vpn_key_status(vpn_key: VPNKey, xui: XUIApi, inbound_id: int):
 
     for client in inbound.settings.clients or []:
         if client.email == vpn_key.provider_key_id:
-            expiry = getattr(client, "expiry_time", None)
+            expiry = getattr(client, "expiryTime", None)
 
             if expiry is not None and expiry < now_ts:
                 vpn_key.is_active = False
@@ -349,7 +349,7 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
             subscription.status = "active"
 
         await session.commit()
-        await xui.close()
+        # await xui.close()
 
         return {
             "vpn_key_id": vpn_key.id,
@@ -376,7 +376,7 @@ async def remove_vpn_xui(vpn_key: VPNKey):
 
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
-            await xui.close()
+            # await xui.close()
             raise Exception("Inbound не найден")
 
         inbound_id = inbound.id
@@ -387,10 +387,10 @@ async def remove_vpn_xui(vpn_key: VPNKey):
                 email=vpn_key.provider_key_id
             )
         except Exception as e:
-            await xui.close()
+            # await xui.close()
             raise Exception(f"Не удалось удалить клиента на XUI: {e}")
 
-        await xui.close()
+        # await xui.close()
 
         # Деактивируем ключ в БД
         vpn_key.is_active = False
@@ -422,7 +422,7 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
                 if inbound:
                     await sync_vpn_key_status(key, xui, inbound.id)
             finally:
-                await xui.close()
+                # await xui.close()
 
             sub.status = "active" if key.is_active else "expired"
 
