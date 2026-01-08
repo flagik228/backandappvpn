@@ -276,14 +276,14 @@ async def renew_invoice(data: RenewInvoiceRequest):
         if stars_price < 1:
             stars_price = 1
 
+        # ✅ БЕЗ type
         order = Order(
             idUser=user.idUser,
             server_id=server.idServerVPN,
             idTarif=tariff.idTarif,
             amount=stars_price,
             currency="XTR",
-            status="pending",
-            type="renew"   # 🔥 ВАЖНО
+            status="pending"
         )
 
         session.add(order)
