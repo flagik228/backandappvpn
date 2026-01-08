@@ -422,6 +422,7 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
                 if inbound:
                     await sync_vpn_key_status(key, xui, inbound.id)
             finally:
+                pass
                 # await xui.close()
 
             sub.status = "active" if key.is_active else "expired"
