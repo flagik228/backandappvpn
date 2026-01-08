@@ -706,6 +706,10 @@ async def admin_update_order(order_id: int, data: OrderUpdate):
 async def admin_delete_order(order_id: int):
     return await rqadm.admin_delete_order(order_id)
 
+@app.get("/api/admin/tariffs")
+async def admin_get_all_tariffs():
+    return await rqadm.admin_get_all_tariffs()
+
 
 
 # ======================

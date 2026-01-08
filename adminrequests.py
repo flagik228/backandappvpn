@@ -503,6 +503,20 @@ async def admin_delete_order(order_id: int):
         await session.commit()
         return {"status": "ok"}
 
+async def admin_get_all_tariffs():
+    async with async_session() as session:
+        tariffs = (await session.scalars(select(Tariff))).all()
+        return [
+            {
+                "idTarif": t.idTarif,
+                "server_id": t.server_id,
+                "days": t.days,
+                "price_tarif": str(t.price_tarif),
+                "is_active": t.is_active
+            }
+            for t in tariffs
+        ]
+
 
 
 # =========================================================
