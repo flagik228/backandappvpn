@@ -116,20 +116,26 @@ async def get_servers_full():
 
 async def sync_vpn_key_status(vpn_key: VPNKey, xui: XUIApi, inbound_id: int):
     """
-    Синхронизирует is_active в БД с реальным состоянием клиента в 3x-ui
+    Синхронизация статуса VPN ключа с 3x-ui
     """
     inbound = await xui.get_inbound(inbound_id)
+    if not inbound:
+        vpn_key.is_active = False
+        return
+
     now_ts = int(datetime.utcnow().timestamp() * 1000)
 
     for client in inbound.settings.clients or []:
-        if client.id == vpn_key.provider_key_id:
-            if client.expiryTime and client.expiryTime < now_ts:
+        if client.email == vpn_key.provider_key_id:
+            expiry = getattr(client, "expiry_time", None)
+
+            if expiry is not None and expiry < now_ts:
                 vpn_key.is_active = False
             else:
                 vpn_key.is_active = True
             return
 
-    # если клиента вообще нет — считаем неактивным
+    # если клиента нет в inbound — считаем истёкшим
     vpn_key.is_active = False
 
 
@@ -267,7 +273,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
             idUser=user_id,
             idServerVPN=server_id,
             provider="xui",
-            provider_key_id=uuid,
+            provider_key_id=client_email,  # ← ВАЖНО
             access_data=access_link,
             created_at=now,
             expires_at=expires_at,
@@ -323,7 +329,7 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
         # 🔥 ПРОДЛЯЕМ В XUI
         await xui.extend_client(
             inbound_id=inbound.id,
-            email=f"{vpn_key.provider_key_id}@vpn",
+            email=vpn_key.provider_key_id,
             days=tariff.days
         )
 
@@ -378,7 +384,7 @@ async def remove_vpn_xui(vpn_key: VPNKey):
         try:
             await xui.remove_client(
                 inbound_id=inbound_id,
-                email=f"{vpn_key.provider_key_id}@vpn"
+                email=vpn_key.provider_key_id
             )
         except Exception as e:
             await xui.close()
@@ -410,12 +416,13 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
         result = []
 
         for sub, key, server in rows:
-            # 🔁 синхронизация с 3x-ui
             xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
-            inbound = await xui.get_inbound_by_port(server.inbound_port)
-
-            if inbound:
-                await sync_vpn_key_status(key, xui, inbound.id)
+            try:
+                inbound = await xui.get_inbound_by_port(server.inbound_port)
+                if inbound:
+                    await sync_vpn_key_status(key, xui, inbound.id)
+            finally:
+                await xui.close()
 
             sub.status = "active" if key.is_active else "expired"
 
@@ -424,7 +431,7 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
                 "server_id": server.idServerVPN,
                 "serverName": server.nameVPN,
                 "access_data": key.access_data,
-                "expires_at": key.expires_at.isoformat(),
+                "expires_at": key.expires_at.isoformat() if key.expires_at else None,
                 "is_active": key.is_active,
                 "status": sub.status
             })
