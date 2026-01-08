@@ -247,90 +247,84 @@ async def create_invoice(data: CreateInvoiceRequest):
 class RenewInvoiceRequest(BaseModel):
     tg_id: int
     vpn_key_id: int
-    months: int  # количество месяцев для продления
+    tariff_id: int
 
 @app.post("/api/vpn/renew-invoice")
 async def renew_invoice(data: RenewInvoiceRequest):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise HTTPException(404, "User not found")
 
         vpn_key = await session.get(VPNKey, data.vpn_key_id)
         if not vpn_key:
-            raise HTTPException(status_code=404, detail="VPN key not found")
+            raise HTTPException(404, "VPN key not found")
+
+        tariff = await session.get(Tariff, data.tariff_id)
+        if not tariff or not tariff.is_active:
+            raise HTTPException(404, "Tariff not found")
 
         server = await session.get(ServersVPN, vpn_key.idServerVPN)
-        if not server:
-            raise HTTPException(status_code=404, detail="Server not found")
 
-        # Берём тариф на выбранное количество месяцев (предположим 30 дней в месяц)
-        # tariff_days = 30 * data.months
-
-        # Рассчитываем цену по тарифу
-        tariff = await session.scalar(select(Tariff).where(Tariff.server_id == server.idServerVPN, Tariff.is_active == True))
-        if not tariff:
-            raise HTTPException(status_code=404, detail="Tariff not found")
-
-        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        rate = await session.scalar(
+            select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT")
+        )
         if not rate:
-            raise HTTPException(status_code=500, detail="Exchange rate not set")
+            raise HTTPException(500, "Exchange rate not set")
 
-        price_usdt = Decimal(tariff.price_tarif) * data.months
-        stars_price = int(price_usdt / rate.rate)
+        stars_price = int(Decimal(tariff.price_tarif) / rate.rate)
         if stars_price < 1:
             stars_price = 1
 
-        # Создаём Order для продления
         order = Order(
             idUser=user.idUser,
             server_id=server.idServerVPN,
             idTarif=tariff.idTarif,
             amount=stars_price,
             currency="XTR",
-            status="pending"
+            status="pending",
+            type="renew"   # 🔥 ВАЖНО
         )
-        session.add(order)
-        await session.commit()
-        await session.refresh(order)
 
-        # Создаём invoice через Telegram
-        from aiogram.methods import CreateInvoiceLink
+        session.add(order)
+        await session.flush()
+        await session.commit()
+
         invoice_link = await bot(
             CreateInvoiceLink(
-                title=f"Продление VPN {data.months} мес.",
+                title=f"Продление VPN {tariff.days} дней",
                 description=server.nameVPN,
                 payload=f"renew:{order.id}",
                 currency="XTR",
-                prices=[{"label": f"{data.months} мес. VPN", "amount": stars_price}]
+                prices=[
+                    LabeledPrice(
+                        label=f"{tariff.days} дней VPN",
+                        amount=stars_price
+                    )
+                ]
             )
         )
-        return {
-            "invoice": invoice_link,
-            "payload": f"renew:{order.id}"
-        }
+
+        return {"invoice_link": invoice_link}
         
         
 # подтверждение оплаты продления
 @app.post("/api/vpn/renew-success")
 async def renew_success(payload: str):
-    try:
-        _, order_id_str = payload.split(":")
-        order_id = int(order_id_str)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid payload")
+    prefix, order_id = payload.split(":")
+    order_id = int(order_id)
 
     async with async_session() as session:
         order = await session.get(Order, order_id)
         if not order or order.status != "pending":
-            raise HTTPException(status_code=404, detail="Order invalid")
+            raise HTTPException(400, "Invalid order")
 
         order.status = "paid"
 
         payment = Payment(
             order_id=order.id,
             provider="telegram_stars",
-            provider_payment_id="renew_manual",
+            provider_payment_id="renew",
             status="paid"
         )
         session.add(payment)
@@ -338,16 +332,11 @@ async def renew_success(payload: str):
 
         order.status = "processing"
 
-        try:
-            result = await pay_and_extend_vpn(
-                order.idUser,
-                order.server_id,
-                order.idTarif
-            )
-        except Exception as e:
-            order.status = "failed"
-            await session.commit()
-            raise HTTPException(status_code=500, detail=str(e))
+        result = await pay_and_extend_vpn(
+            order.idUser,
+            order.server_id,
+            order.idTarif
+        )
 
         order.status = "completed"
         await session.commit()
