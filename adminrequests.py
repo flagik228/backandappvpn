@@ -406,53 +406,43 @@ async def admin_delete_tariff(tariff_id: int):
 # =========================================================
 # --- ADMIN: EXCHANGE RATES (CRUD)
 # =========================================================
-async def admin_get_exchange_rates():
+async def admin_get_exchange_rate(pair: str):
     async with async_session() as session:
-        rates = await session.scalars(select(ExchangeRate))
-        return [{
-            "id": r.id,
-            "currency": r.currency,
-            "rate_to_usdt": str(r.rate_to_usdt),
-            "updated_at": r.updated_at.isoformat()
-        } for r in rates]
+        rate = await session.scalar(
+            select(ExchangeRate).where(ExchangeRate.pair == pair)
+        )
+        if not rate:
+            return None
 
-async def admin_add_exchange_rate(currency: str, rate_to_usdt: Decimal):
-    async with async_session() as session:
-        rate = ExchangeRate(currency=currency,rate_to_usdt=rate_to_usdt)
-        
-        session.add(rate)
-        await session.commit()
-        await session.refresh(rate)
         return {
-            "id": rate.id,
-            "currency": rate.currency,
-            "rate_to_usdt": str(rate.rate_to_usdt)
+            "pair": rate.pair,
+            "rate": str(rate.rate),
+            "updated_at": rate.updated_at.isoformat()
         }
 
-async def admin_update_exchange_rate(rate_id: int, rate_to_usdt: Decimal):
+async def admin_set_exchange_rate(pair: str, rate_value: Decimal):
     async with async_session() as session:
-        rate = await session.get(ExchangeRate, rate_id)
-        if not rate:
-            raise ValueError("ExchangeRate не найден")
-
-        await session.execute(update(ExchangeRate).where(ExchangeRate.id == rate_id)
-            .values(
-                rate_to_usdt=rate_to_usdt,
-                updated_at=datetime.utcnow()
-            )
+        rate = await session.scalar(
+            select(ExchangeRate).where(ExchangeRate.pair == pair)
         )
-        await session.commit()
-        return {"status": "ok"}
 
-async def admin_delete_exchange_rate(rate_id: int):
-    async with async_session() as session:
-        rate = await session.get(ExchangeRate, rate_id)
-        if not rate:
-            raise ValueError("ExchangeRate не найден")
+        if rate:
+            rate.rate = rate_value
+            rate.updated_at = datetime.utcnow()
+        else:
+            rate = ExchangeRate(
+                pair=pair,
+                rate=rate_value
+            )
+            session.add(rate)
 
-        await session.delete(rate)
         await session.commit()
-        return {"status": "ok"}
+
+        return {
+            "pair": rate.pair,
+            "rate": str(rate.rate),
+            "updated_at": rate.updated_at.isoformat()
+        }
     
 
     

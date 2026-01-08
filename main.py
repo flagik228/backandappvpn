@@ -635,25 +635,20 @@ async def admin_delete_tariff(tariff_id: int):
 # ======================
 # ADMIN: ExchangeRate
 # ======================
-class ExchangeRateCreate(BaseModel):
+class ExchangeRateUpdate(BaseModel):
     rate: Decimal
-    rate_to_usdt: Decimal
-    
-@app.get("/api/admin/exchange-rates")
-async def admin_get_exchange_rates():
-    return await rqadm.admin_get_exchange_rates()
 
-@app.post("/api/admin/exchange-rates")
-async def admin_add_exchange_rate(data: ExchangeRateCreate):
-    return await rqadm.admin_add_exchange_rate(data.currency,data.rate_to_usdt)
 
-@app.patch("/api/admin/exchange-rates/{rate_id}")
-async def admin_update_exchange_rate(rate_id: int, data: ExchangeRateCreate):
-    return await rqadm.admin_update_exchange_rate(rate_id, data.rate_to_usdt)
+@app.get("/api/admin/exchange-rate/{pair}")
+async def admin_get_exchange_rate(pair: str):
+    rate = await rqadm.admin_get_exchange_rate(pair)
+    if not rate:
+        raise HTTPException(status_code=404, detail="Rate not found")
+    return rate
 
-@app.delete("/api/admin/exchange-rates/{rate_id}")
-async def admin_delete_exchange_rate(rate_id: int):
-    return await rqadm.admin_delete_exchange_rate(rate_id)
+@app.put("/api/admin/exchange-rate/{pair}")
+async def admin_set_exchange_rate(pair: str, data: ExchangeRateUpdate):
+    return await rqadm.admin_set_exchange_rate(pair, data.rate)
 
 
 
