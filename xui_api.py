@@ -24,9 +24,11 @@ class XUIApi:
             await asyncio.to_thread(self.api.login)
             self._logged_in = True
 
+
     async def get_inbounds(self):
         await self.login()
         return await asyncio.to_thread(self.api.inbound.get_list)
+
 
     async def get_inbound_by_port(self, port: int):
         """получить inbound по порту"""
@@ -36,29 +38,13 @@ class XUIApi:
                 return inbound
         return None
 
+
     async def get_inbound(self, inbound_id: int):
         await self.login()
         return await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
     
-    """
-    async def get_inbound_raw(self, inbound_id: int) -> dict:
-        await self.login()
-
-        def _req():
-            r = self.api._client.get(
-            f"/panel/api/inbounds/get/{inbound_id}"
-            )
-            r.raise_for_status()
-            data = r.json()
-            if not data.get("success"):
-                raise Exception(f"XUI error: {data}")
-            return data["obj"]
-
-        return await asyncio.to_thread(_req)
-    """
 
     # ————————— CLIENTS —————————
-
     async def add_client(self, inbound_id: int, email: str, days: int):
         await self.login()
 
@@ -86,31 +72,39 @@ class XUIApi:
             "expiry_time": expiry_time
         }
 
+
     async def extend_client(self, inbound_id: int, email: str, days: int):
-        """Продлевает существующего клиента"""
-
         await self.login()
-
         inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
+
         if not inbound:
             raise Exception("Inbound не найден")
 
-        # ищем в списке клиентов
-        found = False
-        for client in inbound.settings.clients or []:
+        now_ms = int(datetime.utcnow().timestamp() * 1000)
+        extended = False
+        clients = inbound.settings.clients or []
+
+        for client in clients:
             if client.email == email:
-                # увеличиваем expiryTime
-                client.expiryTime += days * 24 * 60 * 60 * 1000
-                found = True
+                if client.expiryTime and client.expiryTime > now_ms:
+                    client.expiryTime += days * 86400000
+                else:
+                    client.expiryTime = now_ms + days * 86400000
+
+                client.enable = True
+                extended = True
                 break
 
-        if not found:
+        if not extended:
             raise Exception("Клиент не найден")
 
-        # обновляем клиента через API
-        await asyncio.to_thread(self.api.client.update, client.id, client)
-
+        await asyncio.to_thread(
+            self.api.inbound.update,
+            inbound_id,
+            inbound
+        )
         return True
+
 
     async def remove_client(self, inbound_id: int, email: str):
         """Удаляет клиента"""

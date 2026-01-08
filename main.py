@@ -15,7 +15,7 @@ from aiogram.methods import CreateInvoiceLink
 import requestsfile as rq
 import adminrequests as rqadm
 from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui
-from models import init_db, async_session, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet
+from models import init_db, async_session, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet, Payment
 
 BOT_TOKEN = "8423828272:AAHGuxxQEvTELPukIXl2eNL3p25fI9GGx0U"
 WEBHOOK_PATH = "/webhook"
@@ -47,6 +47,60 @@ async def telegram_webhook(request: Request):
     await dp.feed_update(bot, update)
     return {"ok": True}
 
+
+
+# ======================
+# REGISTER
+# ======================
+
+class RegisterUser(BaseModel):
+    tg_id: int
+    referrer_tg_id: int | None = None
+
+
+@app.post("/api/register")
+async def register_user(data: RegisterUser):
+    async with async_session() as session:
+        user = await session.scalar(
+            select(User).where(User.tg_id == data.tg_id)
+        )
+        if user:
+            return {
+                "status": "exists",
+                "idUser": user.idUser,
+                "referrer_id": user.referrer_id
+            }
+
+        referrer_id = None
+        if data.referrer_tg_id and data.referrer_tg_id != data.tg_id:
+            ref_user = await session.scalar(
+                select(User).where(User.tg_id == data.referrer_tg_id)
+            )
+            if ref_user:
+                referrer_id = ref_user.idUser
+
+        user = User(
+            tg_id=data.tg_id,
+            userRole="user",
+            referrer_id=referrer_id
+        )
+        session.add(user)
+        await session.flush()
+
+        wallet = UserWallet(idUser=user.idUser, balance_usdt=Decimal("0.0"))
+        session.add(wallet)
+
+        await session.commit()
+        await session.refresh(user)
+
+        return {
+            "status": "ok",
+            "idUser": user.idUser,
+            "referrer_id": referrer_id
+        }
+
+
+
 # ======================
 # TELEGRAM HANDLERS
 # ======================
@@ -56,42 +110,72 @@ async def pre_checkout(q: PreCheckoutQuery):
 
 @dp.message(F.successful_payment)
 async def successful_payment(message: Message):
-    payload = message.successful_payment.invoice_payload  # vpn:<order_id>
-    order_id = int(payload.split(":")[1])
+    payload = message.successful_payment.invoice_payload
+
+    try:
+        prefix, order_id_str = payload.split(":")
+        order_id = int(order_id_str)
+    except:
+        return
 
     async with async_session() as session:
         order = await session.get(Order, order_id)
         if not order or order.status != "pending":
             return
 
-        user_id = order.idUser
-        server_id = order.server_id
-        tariff_id = order.idTarif
-        
-        tariff = await session.get(Tariff, tariff_id)
+        order.status = "paid"
+
+        # Payment
+        payment = Payment(
+            order_id=order.id,
+            provider="telegram_stars",
+            provider_payment_id=message.successful_payment.telegram_payment_charge_id,
+            status="paid"
+        )
+        session.add(payment)
+        await session.flush()
+
+        order.status = "processing"
+
+        tariff = await session.get(Tariff, order.idTarif)
         if not tariff:
+            order.status = "failed"
+            await session.commit()
             await message.answer("❌ Тариф не найден")
             return
 
-        # Создаём VPN через OutlineAPI
         try:
-            vpn_data = await create_vpn_xui(user_id, server_id, tariff.days)
+            vpn_data = await create_vpn_xui(
+                order.idUser,
+                order.server_id,
+                tariff.days
+            )
         except Exception as e:
-            await message.answer(f"❌ Ошибка при создании VPN ключа: {e}")
+            order.status = "failed"
+            await session.commit()
+            await message.answer(f"❌ Ошибка VPN: {e}")
             return
 
-        # Обновляем статус заказа
         order.status = "completed"
         await session.commit()
 
-        # Информируем пользователя
-        server = await session.get(ServersVPN, server_id)
+        server = await session.get(ServersVPN, order.server_id)
+        await message.answer(
+            f"✅ <b>VPN активирован!</b>\n"
+            f"Сервер: {server.nameVPN}\n"
+            f"Действует до: {vpn_data['expires_at_human']}\n\n"
+            f"<b>Ваш ключ:</b>\n"
+            f"<code>{vpn_data['access_data']}</code>",
+            parse_mode="HTML"
+        )
+        """
         await message.answer(
             f"✅ VPN активирован!\n"
             f"Сервер: {server.nameVPN}\n"
             f"Действует до: {vpn_data['expires_at_human']}\n"
             f"Ваш ключ:\n{vpn_data['access_data']}"
         )
+        """
         
 # API
 # ======================
@@ -230,24 +314,45 @@ async def renew_invoice(data: RenewInvoiceRequest):
 # подтверждение оплаты продления
 @app.post("/api/vpn/renew-success")
 async def renew_success(payload: str):
-    # payload = renew:<order_id>
     try:
-        order_id = int(payload.split(":")[1])
+        _, order_id_str = payload.split(":")
+        order_id = int(order_id_str)
     except:
         raise HTTPException(status_code=400, detail="Invalid payload")
 
     async with async_session() as session:
         order = await session.get(Order, order_id)
         if not order or order.status != "pending":
-            raise HTTPException(status_code=404, detail="Order not found or already processed")
+            raise HTTPException(status_code=404, detail="Order invalid")
 
-        # Продлеваем VPN
-        result = await pay_and_extend_vpn(order.idUser, order.server_id, order.idTarif)
+        order.status = "paid"
+
+        payment = Payment(
+            order_id=order.id,
+            provider="telegram_stars",
+            provider_payment_id="renew_manual",
+            status="paid"
+        )
+        session.add(payment)
+        await session.flush()
+
+        order.status = "processing"
+
+        try:
+            result = await pay_and_extend_vpn(
+                order.idUser,
+                order.server_id,
+                order.idTarif
+            )
+        except Exception as e:
+            order.status = "failed"
+            await session.commit()
+            raise HTTPException(status_code=500, detail=str(e))
 
         order.status = "completed"
         await session.commit()
 
-        return {"status": "ok", "vpn_key": result}
+        return {"status": "ok", "vpn": result}
 
 
 
@@ -317,41 +422,7 @@ async def get_referrals(
 ):
     return await rq.get_referrals_list(tg_id)
 
-# ======================
-# REGISTER
-# ======================
 
-class RegisterUser(BaseModel):
-    tg_id: int
-    referrer_tg_id: int | None = None
-
-
-@app.post("/api/register")
-async def register_user(data: RegisterUser):
-    async with async_session() as session:
-        user = await session.scalar(
-            select(User).where(User.tg_id == data.tg_id)
-        )
-        if user:
-            return {
-                "status": "exists",
-                "idUser": user.idUser,
-                "referrer_id": user.referrer_id
-            }
-        referrer_id = None
-        if data.referrer_tg_id and data.referrer_tg_id != data.tg_id:
-            ref_user = await session.scalar(
-                select(User).where(User.tg_id == data.referrer_tg_id)
-            )
-            if ref_user:
-                referrer_id = ref_user.idUser
-        # 🔐 ВСЕГДА user
-        new_user = User(tg_id=data.tg_id, userRole="user", referrer_id=referrer_id)
-        session.add(new_user)
-        await session.commit()
-        await session.refresh(new_user)
-        return {"status": "ok", "idUser": new_user.idUser, "referrer_id": referrer_id
-        }
 
 
 
@@ -402,6 +473,7 @@ class WalletCreate(BaseModel):
     balance_usdt: Decimal = Decimal("0.0")
 
 class WalletUpdate(BaseModel):
+    idUser: int
     balance_usdt: Decimal
 
 
@@ -411,11 +483,11 @@ async def admin_get_wallets():
 
 @app.post("/api/admin/wallets")
 async def admin_add_wallet(data: WalletCreate):
-    return await rqadm.admin_add_wallet(data.idUser, data.balance_usdt)
+    return await rqadm.admin_add_wallet(data.dict())
 
-@app.patch("/api/admin/wallets/{wallet_id}")
+@app.put("/api/admin/wallets/{wallet_id}")
 async def admin_update_wallet(wallet_id: int, data: WalletUpdate):
-    return await rqadm.admin_update_wallet(wallet_id, data.balance_usdt)
+    return await rqadm.admin_update_wallet(wallet_id, data.dict())
 
 @app.delete("/api/admin/wallets/{wallet_id}")
 async def admin_delete_wallet(wallet_id: int):
@@ -428,12 +500,13 @@ async def admin_delete_wallet(wallet_id: int):
 class WalletTransactionCreate(BaseModel):
     wallet_id: int
     amount: Decimal
-    type_: str
+    type: str
     description: str | None = None
 
 class WalletTransactionUpdate(BaseModel):
+    wallet_id: int
     amount: Decimal
-    type_: str
+    type: str
     description: str | None = None
 
 
@@ -443,11 +516,11 @@ async def admin_get_wallet_transactions():
 
 @app.post("/api/admin/wallet-transactions")
 async def admin_add_wallet_transaction(data: WalletTransactionCreate):
-    return await rqadm.admin_add_wallet_transaction(data.wallet_id, data.amount, data.type_, data.description)
+    return await rqadm.admin_add_wallet_transaction(data.dict())
 
-@app.patch("/api/admin/wallet-transactions/{tx_id}")
+@app.put("/api/admin/wallet-transactions/{tx_id}")
 async def admin_update_wallet_transaction(tx_id: int, data: WalletTransactionUpdate):
-    return await rqadm.admin_update_wallet_transaction(tx_id, data.amount, data.type_, data.description)
+    return await rqadm.admin_update_wallet_transaction(tx_id, data.dict())
 
 @app.delete("/api/admin/wallet-transactions/{tx_id}")
 async def admin_delete_wallet_transaction(tx_id: int):
@@ -608,9 +681,14 @@ class OrderCreate(BaseModel):
     currency: str
     status: str = "pending"
 
-class OrderUpdateStatus(BaseModel):
+class OrderUpdate(BaseModel):
+    idUser: int
+    server_id: int
+    idTarif: int
+    amount: int
+    currency: str
     status: str
-   
+
 
 @app.get("/api/admin/orders")
 async def admin_get_orders():
@@ -618,15 +696,11 @@ async def admin_get_orders():
 
 @app.post("/api/admin/orders")
 async def admin_add_order(data: OrderCreate):
-    return await rqadm.admin_add_order(idUser=data.idUser, server_id=data.server_id, idTarif=data.idTarif,
-        amount=data.amount,
-        currency=data.currency,
-        status=data.status
-    )
+    return await rqadm.admin_add_order(data.dict())
 
-@app.patch("/api/admin/orders/{order_id}")
-async def admin_update_order(order_id: int, data: OrderUpdateStatus):
-    return await rqadm.admin_update_order_status(order_id, data.status)
+@app.put("/api/admin/orders/{order_id}")
+async def admin_update_order(order_id: int, data: OrderUpdate):
+    return await rqadm.admin_update_order(order_id, data.dict())
 
 @app.delete("/api/admin/orders/{order_id}")
 async def admin_delete_order(order_id: int):
@@ -644,6 +718,9 @@ class PaymentCreate(BaseModel):
     status: str
 
 class PaymentUpdate(BaseModel):
+    order_id: int
+    provider: str
+    provider_payment_id: str
     status: str
 
 
@@ -653,11 +730,11 @@ async def admin_get_payments():
 
 @app.post("/api/admin/payments")
 async def admin_add_payment(data: PaymentCreate):
-    return await rqadm.admin_add_payment(order_id=data.order_id, provider=data.provider, provider_payment_id=data.provider_payment_id, status=data.status)
+    return await rqadm.admin_add_payment(data.dict())
 
-@app.patch("/api/admin/payments/{payment_id}")
+@app.put("/api/admin/payments/{payment_id}")
 async def admin_update_payment(payment_id: int, data: PaymentUpdate):
-    return await rqadm.admin_update_payment(payment_id, data.status)
+    return await rqadm.admin_update_payment(payment_id, data.dict())
 
 @app.delete("/api/admin/payments/{payment_id}")
 async def admin_delete_payment(payment_id: int):
@@ -678,6 +755,11 @@ class VPNKeyCreate(BaseModel):
     is_active: bool = True
 
 class VPNKeyUpdate(BaseModel):
+    idUser: int
+    idServerVPN: int
+    provider: str
+    provider_key_id: str
+    access_data: str
     expires_at: datetime
     is_active: bool
 
@@ -688,11 +770,11 @@ async def admin_get_vpn_keys():
 
 @app.post("/api/admin/vpn-keys")
 async def admin_add_vpn_key(data: VPNKeyCreate):
-    return await rqadm.admin_add_vpn_key(data.idUser, data.idServerVPN, data.provider, data.provider_key_id, data.access_data, data.expires_at, data.is_active)
+    return await rqadm.admin_add_vpn_key(data.dict())
 
-@app.patch("/api/admin/vpn-keys/{key_id}")
+@app.put("/api/admin/vpn-keys/{key_id}")
 async def admin_update_vpn_key(key_id: int, data: VPNKeyUpdate):
-    return await rqadm.admin_update_vpn_key(key_id, data.expires_at, data.is_active)
+    return await rqadm.admin_update_vpn_key(key_id, data.dict())
 
 @app.delete("/api/admin/vpn-keys/{key_id}")
 async def admin_delete_vpn_key(key_id: int):
@@ -705,10 +787,14 @@ async def admin_delete_vpn_key(key_id: int):
 class VPNSubscriptionCreate(BaseModel):
     idUser: int
     vpn_key_id: int
+    started_at: datetime
     expires_at: datetime
-    status: str = "active"
+    status: str
 
 class VPNSubscriptionUpdate(BaseModel):
+    idUser: int
+    vpn_key_id: int
+    started_at: datetime
     expires_at: datetime
     status: str
 
@@ -719,11 +805,11 @@ async def admin_get_vpn_subscriptions():
 
 @app.post("/api/admin/vpn-subscriptions")
 async def admin_add_vpn_subscription(data: VPNSubscriptionCreate):
-    return await rqadm.admin_add_vpn_subscription(data.idUser, data.vpn_key_id, data.expires_at, data.status)
+    return await rqadm.admin_add_vpn_subscription(data.dict())
 
-@app.patch("/api/admin/vpn-subscriptions/{sub_id}")
+@app.put("/api/admin/vpn-subscriptions/{sub_id}")
 async def admin_update_vpn_subscription(sub_id: int, data: VPNSubscriptionUpdate):
-    return await rqadm.admin_update_vpn_subscription(sub_id, data.status)
+    return await rqadm.admin_update_vpn_subscription(sub_id, data.dict())
 
 @app.delete("/api/admin/vpn-subscriptions/{sub_id}")
 async def admin_delete_vpn_subscription(sub_id: int):
@@ -769,6 +855,8 @@ class ReferralEarningCreate(BaseModel):
     amount_usdt: Decimal
 
 class ReferralEarningUpdate(BaseModel):
+    referrer_id: int
+    order_id: int
     percent: int
     amount_usdt: Decimal
 
@@ -779,11 +867,11 @@ async def admin_get_referral_earnings():
 
 @app.post("/api/admin/referral-earnings")
 async def admin_add_referral_earning(data: ReferralEarningCreate):
-    return await rqadm.admin_add_referral_earning(data.referrer_id, data.order_id, data.percent, data.amount_usdt)
+    return await rqadm.admin_add_referral_earning(data.dict())
 
-@app.patch("/api/admin/referral-earnings/{earning_id}")
+@app.put("/api/admin/referral-earnings/{earning_id}")
 async def admin_update_referral_earning(earning_id: int, data: ReferralEarningUpdate):
-    return await rqadm.admin_update_referral_earning(earning_id, data.percent, data.amount_usdt)
+    return await rqadm.admin_update_referral_earning(earning_id, data.dict())
 
 @app.delete("/api/admin/referral-earnings/{earning_id}")
 async def admin_delete_referral_earning(earning_id: int):

@@ -71,32 +71,31 @@ async def admin_delete_user(user_id: int):
 # =======================
 async def admin_get_wallets():
     async with async_session() as session:
-        rows = await session.scalars(select(UserWallet))
+        wallets = (await session.scalars(select(UserWallet))).all()
         return [{
             "id": w.id,
             "idUser": w.idUser,
             "balance_usdt": str(w.balance_usdt),
             "updated_at": w.updated_at.isoformat()
-        } for w in rows]
-        
-async def admin_add_wallet(idUser: int, balance_usdt: Decimal = Decimal("0.0")):
+        } for w in wallets]
+
+async def admin_add_wallet(data: dict):
     async with async_session() as session:
-        wallet = UserWallet(
-            idUser=idUser,
-            balance_usdt=balance_usdt
-        )
+        wallet = UserWallet(**data)
         session.add(wallet)
         await session.commit()
         await session.refresh(wallet)
         return {"id": wallet.id}
 
-async def admin_update_wallet(wallet_id: int, balance_usdt: Decimal):
+async def admin_update_wallet(wallet_id: int, data: dict):
     async with async_session() as session:
         wallet = await session.get(UserWallet, wallet_id)
         if not wallet:
             raise ValueError("Wallet not found")
 
-        wallet.balance_usdt = balance_usdt
+        for k, v in data.items():
+            setattr(wallet, k, v)
+
         wallet.updated_at = datetime.utcnow()
         await session.commit()
         return {"status": "ok"}
@@ -118,7 +117,7 @@ async def admin_delete_wallet(wallet_id: int):
 # =======================
 async def admin_get_wallet_transactions():
     async with async_session() as session:
-        rows = await session.scalars(select(WalletTransaction))
+        txs = (await session.scalars(select(WalletTransaction))).all()
         return [{
             "id": t.id,
             "wallet_id": t.wallet_id,
@@ -126,30 +125,24 @@ async def admin_get_wallet_transactions():
             "type": t.type,
             "description": t.description,
             "created_at": t.created_at.isoformat()
-        } for t in rows]
-        
-async def admin_add_wallet_transaction(wallet_id: int,amount: Decimal,type_: str,description: str | None = None):
+        } for t in txs]
+
+async def admin_add_wallet_transaction(data: dict):
     async with async_session() as session:
-        tx = WalletTransaction(
-            wallet_id=wallet_id,
-            amount=amount,
-            type=type_,
-            description=description
-        )
+        tx = WalletTransaction(**data)
         session.add(tx)
         await session.commit()
         await session.refresh(tx)
         return {"id": tx.id}
 
-async def admin_update_wallet_transaction(tx_id: int,amount: Decimal,type_: str,description: str | None = None):
+async def admin_update_wallet_transaction(tx_id: int, data: dict):
     async with async_session() as session:
         tx = await session.get(WalletTransaction, tx_id)
         if not tx:
             raise ValueError("Transaction not found")
 
-        tx.amount = amount
-        tx.type = type_
-        tx.description = description
+        for k, v in data.items():
+            setattr(tx, k, v)
 
         await session.commit()
         return {"status": "ok"}
@@ -468,7 +461,7 @@ async def admin_delete_exchange_rate(rate_id: int):
 # =========================================================
 async def admin_get_orders():
     async with async_session() as session:
-        orders = await session.scalars(select(Order))
+        orders = (await session.scalars(select(Order))).all()
         return [{
             "id": o.id,
             "idUser": o.idUser,
@@ -479,36 +472,24 @@ async def admin_get_orders():
             "status": o.status,
             "created_at": o.created_at.isoformat()
         } for o in orders]
-        
-async def admin_add_order(
-    idUser: int,
-    server_id: int,
-    idTarif: int,
-    amount: int,
-    currency: str,
-    status: str = "pending"
-):
+
+async def admin_add_order(data):
     async with async_session() as session:
-        order = Order(
-            idUser=idUser,
-            server_id=server_id,
-            idTarif=idTarif,
-            amount=amount,
-            currency=currency,
-            status=status
-        )
+        order = Order(**data)
         session.add(order)
         await session.commit()
         await session.refresh(order)
         return {"id": order.id}
 
-async def admin_update_order_status(order_id: int, status: str):
+async def admin_update_order(order_id: int, data: dict):
     async with async_session() as session:
         order = await session.get(Order, order_id)
         if not order:
             raise ValueError("Order not found")
 
-        order.status = status
+        for key, value in data.items():
+            setattr(order, key, value)
+
         await session.commit()
         return {"status": "ok"}
 
@@ -529,7 +510,7 @@ async def admin_delete_order(order_id: int):
 # =========================================================
 async def admin_get_payments():
     async with async_session() as session:
-        rows = await session.scalars(select(Payment))
+        payments = (await session.scalars(select(Payment))).all()
         return [{
             "id": p.id,
             "order_id": p.order_id,
@@ -537,43 +518,35 @@ async def admin_get_payments():
             "provider_payment_id": p.provider_payment_id,
             "status": p.status,
             "created_at": p.created_at.isoformat()
-        } for p in rows]
+        } for p in payments]
 
-async def admin_add_payment(
-    order_id: int,
-    provider: str,
-    provider_payment_id: str,
-    status: str
-):
+async def admin_add_payment(data: dict):
     async with async_session() as session:
-        p = Payment(
-            order_id=order_id,
-            provider=provider,
-            provider_payment_id=provider_payment_id,
-            status=status
-        )
-        session.add(p)
+        payment = Payment(**data)
+        session.add(payment)
         await session.commit()
-        await session.refresh(p)
-        return {"id": p.id}
+        await session.refresh(payment)
+        return {"id": payment.id}
 
-async def admin_update_payment(payment_id: int, status: str):
+async def admin_update_payment(payment_id: int, data: dict):
     async with async_session() as session:
-        p = await session.get(Payment, payment_id)
-        if not p:
+        payment = await session.get(Payment, payment_id)
+        if not payment:
             raise ValueError("Payment not found")
 
-        p.status = status
+        for key, value in data.items():
+            setattr(payment, key, value)
+
         await session.commit()
         return {"status": "ok"}
 
 async def admin_delete_payment(payment_id: int):
     async with async_session() as session:
-        p = await session.get(Payment, payment_id)
-        if not p:
+        payment = await session.get(Payment, payment_id)
+        if not payment:
             raise ValueError("Payment not found")
 
-        await session.delete(p)
+        await session.delete(payment)
         await session.commit()
         return {"status": "ok"}
 
@@ -584,49 +557,35 @@ async def admin_delete_payment(payment_id: int):
 # =========================================================
 async def admin_get_vpn_keys():
     async with async_session() as session:
-        rows = await session.scalars(select(VPNKey))
+        keys = (await session.scalars(select(VPNKey))).all()
         return [{
             "id": k.id,
             "idUser": k.idUser,
             "idServerVPN": k.idServerVPN,
             "provider": k.provider,
+            "provider_key_id": k.provider_key_id,
             "access_data": k.access_data,
             "expires_at": k.expires_at.isoformat(),
             "is_active": k.is_active
-        } for k in rows]
+        } for k in keys]
 
-async def admin_add_vpn_key(
-    idUser: int,
-    idServerVPN: int,
-    provider: str,
-    provider_key_id: str,
-    access_data: str,
-    expires_at: datetime,
-    is_active: bool = True
-):
+async def admin_add_vpn_key(data: dict):
     async with async_session() as session:
-        key = VPNKey(
-            idUser=idUser,
-            idServerVPN=idServerVPN,
-            provider=provider,
-            provider_key_id=provider_key_id,
-            access_data=access_data,
-            expires_at=expires_at,
-            is_active=is_active
-        )
+        key = VPNKey(**data)
         session.add(key)
         await session.commit()
         await session.refresh(key)
         return {"id": key.id}
 
-async def admin_update_vpn_key(key_id: int, expires_at: datetime, is_active: bool):
+async def admin_update_vpn_key(key_id: int, data: dict):
     async with async_session() as session:
         key = await session.get(VPNKey, key_id)
         if not key:
             raise ValueError("VPNKey not found")
 
-        key.expires_at = expires_at
-        key.is_active = is_active
+        for k, v in data.items():
+            setattr(key, k, v)
+
         await session.commit()
         return {"status": "ok"}
 
@@ -640,16 +599,6 @@ async def admin_delete_vpn_key(key_id: int):
         await session.commit()
         return {"status": "ok"}
 
-async def admin_disable_vpn_key(key_id: int):
-    async with async_session() as session:
-        key = await session.get(VPNKey, key_id)
-        if not key:
-            raise ValueError("VPNKey not found")
-
-        key.is_active = False
-        await session.commit()
-        return {"status": "ok"}
-
 
 
 # =========================================================
@@ -657,7 +606,7 @@ async def admin_disable_vpn_key(key_id: int):
 # =========================================================
 async def admin_get_vpn_subscriptions():
     async with async_session() as session:
-        rows = await session.scalars(select(VPNSubscription))
+        subs = (await session.scalars(select(VPNSubscription))).all()
         return [{
             "id": s.id,
             "idUser": s.idUser,
@@ -665,33 +614,25 @@ async def admin_get_vpn_subscriptions():
             "started_at": s.started_at.isoformat(),
             "expires_at": s.expires_at.isoformat(),
             "status": s.status
-        } for s in rows]
+        } for s in subs]
 
-async def admin_add_vpn_subscription(
-    idUser: int,
-    vpn_key_id: int,
-    expires_at: datetime,
-    status: str = "active"
-):
+async def admin_add_vpn_subscription(data: dict):
     async with async_session() as session:
-        sub = VPNSubscription(
-            idUser=idUser,
-            vpn_key_id=vpn_key_id,
-            expires_at=expires_at,
-            status=status
-        )
+        sub = VPNSubscription(**data)
         session.add(sub)
         await session.commit()
         await session.refresh(sub)
         return {"id": sub.id}
 
-async def admin_update_vpn_subscription(sub_id: int, status: str):
+async def admin_update_vpn_subscription(sub_id: int, data: dict):
     async with async_session() as session:
         sub = await session.get(VPNSubscription, sub_id)
         if not sub:
             raise ValueError("Subscription not found")
 
-        sub.status = status
+        for k, v in data.items():
+            setattr(sub, k, v)
+
         await session.commit()
         return {"status": "ok"}
 
@@ -722,6 +663,12 @@ async def admin_get_referral_config():
 
 async def admin_add_referral_config(percent: int, is_active: bool):
     async with async_session() as session:
+
+        if is_active:
+            await session.execute(
+                update(ReferralConfig).values(is_active=False)
+            )
+
         c = ReferralConfig(percent=percent, is_active=is_active)
         session.add(c)
         await session.commit()
@@ -733,6 +680,13 @@ async def admin_update_referral_config(config_id: int, percent: int, is_active: 
         c = await session.get(ReferralConfig, config_id)
         if not c:
             raise ValueError("ReferralConfig not found")
+
+        if is_active:
+            await session.execute(
+                update(ReferralConfig)
+                .where(ReferralConfig.id != config_id)
+                .values(is_active=False)
+            )
 
         c.percent = percent
         c.is_active = is_active
@@ -756,7 +710,7 @@ async def admin_delete_referral_config(config_id: int):
 # =========================================================
 async def admin_get_referral_earnings():
     async with async_session() as session:
-        rows = await session.scalars(select(ReferralEarning))
+        earnings = (await session.scalars(select(ReferralEarning))).all()
         return [{
             "id": e.id,
             "referrer_id": e.referrer_id,
@@ -764,39 +718,25 @@ async def admin_get_referral_earnings():
             "percent": e.percent,
             "amount_usdt": str(e.amount_usdt),
             "created_at": e.created_at.isoformat()
-        } for e in rows]
+        } for e in earnings]
 
-async def admin_add_referral_earning(
-    referrer_id: int,
-    order_id: int,
-    percent: int,
-    amount_usdt: Decimal
-):
+async def admin_add_referral_earning(data: dict):
     async with async_session() as session:
-        e = ReferralEarning(
-            referrer_id=referrer_id,
-            order_id=order_id,
-            percent=percent,
-            amount_usdt=amount_usdt
-        )
+        e = ReferralEarning(**data)
         session.add(e)
         await session.commit()
         await session.refresh(e)
         return {"id": e.id}
 
-
-async def admin_update_referral_earning(
-    earning_id: int,
-    percent: int,
-    amount_usdt: Decimal
-):
+async def admin_update_referral_earning(earning_id: int, data: dict):
     async with async_session() as session:
         e = await session.get(ReferralEarning, earning_id)
         if not e:
             raise ValueError("ReferralEarning not found")
 
-        e.percent = percent
-        e.amount_usdt = amount_usdt
+        for k, v in data.items():
+            setattr(e, k, v)
+
         await session.commit()
         return {"status": "ok"}
 
