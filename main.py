@@ -112,11 +112,8 @@ async def pre_checkout(q: PreCheckoutQuery):
 async def successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
 
-    try:
-        prefix, order_id_str = payload.split(":")
-        order_id = int(order_id_str)
-    except:
-        return
+    prefix, order_id = payload.split(":")
+    order_id = int(order_id)
 
     async with async_session() as session:
         order = await session.get(Order, order_id)
@@ -125,7 +122,6 @@ async def successful_payment(message: Message):
 
         order.status = "paid"
 
-        # Payment
         payment = Payment(
             order_id=order.id,
             provider="telegram_stars",
@@ -138,44 +134,42 @@ async def successful_payment(message: Message):
         order.status = "processing"
 
         tariff = await session.get(Tariff, order.idTarif)
-        if not tariff:
-            order.status = "failed"
-            await session.commit()
-            await message.answer("❌ Тариф не найден")
-            return
+        server = await session.get(ServersVPN, order.server_id)
 
         try:
-            vpn_data = await create_vpn_xui(
-                order.idUser,
-                order.server_id,
-                tariff.days
-            )
+            if order.purpose_order == "buy":
+                vpn_data = await create_vpn_xui(
+                    order.idUser,
+                    order.server_id,
+                    tariff.days
+                )
+
+            elif order.purpose_order == "extension":
+                vpn_data = await pay_and_extend_vpn(
+                    order.idUser,
+                    order.server_id,
+                    order.idTarif
+                )
+            else:
+                raise Exception("Unknown order purpose")
+
         except Exception as e:
             order.status = "failed"
             await session.commit()
-            await message.answer(f"❌ Ошибка VPN: {e}")
+            await message.answer(f"❌ Ошибка: {e}")
             return
 
         order.status = "completed"
         await session.commit()
 
-        server = await session.get(ServersVPN, order.server_id)
         await message.answer(
-            f"✅ <b>VPN активирован!</b>\n"
+            f"✅ <b>VPN готов!</b>\n"
             f"Сервер: {server.nameVPN}\n"
             f"Действует до: {vpn_data['expires_at_human']}\n\n"
             f"<b>Ваш ключ:</b>\n"
             f"<code>{vpn_data['access_data']}</code>",
             parse_mode="HTML"
         )
-        """
-        await message.answer(
-            f"✅ VPN активирован!\n"
-            f"Сервер: {server.nameVPN}\n"
-            f"Действует до: {vpn_data['expires_at_human']}\n"
-            f"Ваш ключ:\n{vpn_data['access_data']}"
-        )
-        """
         
 # API
 # ======================
@@ -218,7 +212,8 @@ async def create_invoice(data: CreateInvoiceRequest):
         order = Order(
             idUser=user.idUser,
             server_id=server.idServerVPN,
-            idTarif=tariff.idTarif,  # ← добавляем тариф
+            idTarif=tariff.idTarif,
+            purpose_order="buy",
             amount=stars_price,
             currency="XTR",
             status="pending"
@@ -281,6 +276,7 @@ async def renew_invoice(data: RenewInvoiceRequest):
             idUser=user.idUser,
             server_id=server.idServerVPN,
             idTarif=tariff.idTarif,
+            purpose_order="extension",
             amount=stars_price,
             currency="XTR",
             status="pending"
@@ -307,7 +303,8 @@ async def renew_invoice(data: RenewInvoiceRequest):
 
         return {"invoice_link": invoice_link}
         
-        
+
+"""
 # подтверждение оплаты продления
 @app.post("/api/vpn/renew-success")
 async def renew_success(payload: str):
@@ -342,6 +339,7 @@ async def renew_success(payload: str):
         await session.commit()
 
         return {"status": "ok", "vpn": result}
+"""
 
 
 
@@ -666,6 +664,7 @@ class OrderCreate(BaseModel):
     idUser: int
     server_id: int
     idTarif: int
+    purpose_order: str
     amount: int
     currency: str
     status: str = "pending"
@@ -674,6 +673,7 @@ class OrderUpdate(BaseModel):
     idUser: int
     server_id: int
     idTarif: int
+    purpose_order: str
     amount: int
     currency: str
     status: str

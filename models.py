@@ -120,6 +120,7 @@ class Order(Base):
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser"))
     server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN"))
     idTarif: Mapped[int] = mapped_column(ForeignKey("tariffs.idTarif"))
+    purpose_order: Mapped[str] = mapped_column(String(100)) # "buy" при покупке и "extension" при продлении
     amount: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(10))  # XTR / USDT
     status: Mapped[str] = mapped_column(String(30), default="pending")  # pending / paid / failed

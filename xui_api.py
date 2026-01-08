@@ -75,13 +75,12 @@ class XUIApi:
 
     async def extend_client(self, inbound_id: int, email: str, days: int):
         await self.login()
-        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
 
+        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
         if not inbound:
             raise Exception("Inbound не найден")
 
         now_ms = int(datetime.utcnow().timestamp() * 1000)
-        extended = False
         clients = inbound.settings.clients or []
 
         for client in clients:
@@ -92,18 +91,15 @@ class XUIApi:
                     client.expiryTime = now_ms + days * 86400000
 
                 client.enable = True
-                extended = True
-                break
 
-        if not extended:
-            raise Exception("Клиент не найден")
+                await asyncio.to_thread(
+                    self.api.client.update,
+                    client.id,
+                    client
+                )
+                return True
 
-        await asyncio.to_thread(
-            self.api.inbound.update,
-            inbound_id,
-            inbound
-        )
-        return True
+        raise Exception("Клиент не найден")
 
 
     async def remove_client(self, inbound_id: int, email: str):

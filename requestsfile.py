@@ -142,12 +142,13 @@ async def sync_vpn_key_status(vpn_key: VPNKey, xui: XUIApi, inbound_id: int):
 
 # =====================================================================
 # --- СОЗДАНИЕ ЗАКАЗА ---    
-async def create_order(user_id: int, server_id: int, tariff_id: int, amount_usdt: Decimal, currency: str = "XTR"):
+async def create_order(user_id: int,server_id: int,tariff_id: int,amount_usdt: Decimal,purpose_order: str = "buy",currency: str = "XTR"):
     async with async_session() as session:
         order = Order(
             idUser=user_id,
             server_id=server_id,
             idTarif=tariff_id,
+            purpose_order=purpose_order,
             amount=int(amount_usdt),
             currency=currency,
             status="pending"

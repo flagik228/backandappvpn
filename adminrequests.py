@@ -459,6 +459,8 @@ async def admin_delete_exchange_rate(rate_id: int):
 # =========================================================
 # --- ADMIN: Order
 # =========================================================
+ALLOWED_PURPOSES = {"buy", "extension"}
+
 async def admin_get_orders():
     async with async_session() as session:
         orders = (await session.scalars(select(Order))).all()
@@ -467,6 +469,7 @@ async def admin_get_orders():
             "idUser": o.idUser,
             "server_id": o.server_id,
             "idTarif": o.idTarif,
+            "purpose_order": o.purpose_order,
             "amount": o.amount,
             "currency": o.currency,
             "status": o.status,
@@ -474,6 +477,9 @@ async def admin_get_orders():
         } for o in orders]
 
 async def admin_add_order(data):
+    if data.get("purpose_order") not in ALLOWED_PURPOSES:
+        raise ValueError("Invalid purpose_order")
+    
     async with async_session() as session:
         order = Order(**data)
         session.add(order)
@@ -482,6 +488,10 @@ async def admin_add_order(data):
         return {"id": order.id}
 
 async def admin_update_order(order_id: int, data: dict):
+    if "purpose_order" in data:
+        if data["purpose_order"] not in ALLOWED_PURPOSES:
+            raise ValueError("Invalid purpose_order")
+        
     async with async_session() as session:
         order = await session.get(Order, order_id)
         if not order:
