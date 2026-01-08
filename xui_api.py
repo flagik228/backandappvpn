@@ -1,30 +1,39 @@
 import uuid
 import asyncio
+import httpx
+import ssl
 from datetime import datetime, timedelta
 from py3xui import Api
 from py3xui.client.client import Client  # корректный импорт клиента
+
+
+
+# 🔥 ГЛОБАЛЬНО отключаем проверку SSL (self-signed 3x-ui)
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
+
+httpx._config.DEFAULT_SSL_CONTEXT = ssl_context
 
 class XUIApi:
     """API-обёртка над py3xui, совместимая с 3x-ui 2.x/3.x"""
 
     def __init__(self, api_url: str, username: str, password: str):
-        # py3xui Api работает и синхронно, и асинхронно через httpx
         self.api = Api(
             host=api_url,
             username=username,
             password=password
         )
-        # если у тебя самоподписанный сертификат
-        self.api.client.verify = False
         self._logged_in = False
+        self._lock = asyncio.Lock()
 
     async def login(self):
-        if not self._logged_in:
-            # py3xui Api.login — синхронный, поэтому запускаем в потоке
-            await asyncio.to_thread(self.api.login)
-            self._logged_in = True
+        async with self._lock:
+            if not self._logged_in:
+                await asyncio.to_thread(self.api.login)
+                self._logged_in = True
 
-
+    # ---------------- INBOUNDS ----------------
     async def get_inbounds(self):
         await self.login()
         return await asyncio.to_thread(self.api.inbound.get_list)
@@ -81,9 +90,8 @@ class XUIApi:
             raise Exception("Inbound не найден")
 
         now_ms = int(datetime.utcnow().timestamp() * 1000)
-        clients = inbound.settings.clients or []
-
-        for client in clients:
+        
+        for client in inbound.settings.clients or []:
             if client.email == email:
                 if client.expiryTime and client.expiryTime > now_ms:
                     client.expiryTime += days * 86400000
@@ -103,19 +111,21 @@ class XUIApi:
 
 
     async def remove_client(self, inbound_id: int, email: str):
-        """Удаляет клиента"""
-
         await self.login()
 
-        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
+        inbound = await asyncio.to_thread(
+            self.api.inbound.get_by_id, inbound_id
+        )
         if not inbound:
             raise Exception("Inbound не найден")
 
-        # ищем того, кого удаляем
         for client in inbound.settings.clients or []:
             if client.email == email:
-                # удаляем через api.client.delete
-                await asyncio.to_thread(self.api.client.delete, inbound_id, client.id)
+                await asyncio.to_thread(
+                    self.api.client.delete,
+                    inbound_id,
+                    client.id
+                )
                 return True
 
         raise Exception("Клиент не найден")
