@@ -127,7 +127,7 @@ async def sync_vpn_key_status(vpn_key: VPNKey, xui: XUIApi, inbound_id: int):
 
     for client in inbound.settings.clients or []:
         if client.email == vpn_key.provider_key_id:
-            expiry = getattr(client, "expiryTime", None)
+            expiry = client.expiry_time
 
             if expiry is not None and expiry < now_ts:
                 vpn_key.is_active = False
@@ -168,16 +168,8 @@ def format_datetime_ru(dt: datetime) -> str:
     return dt.strftime("%d.%m.%Y %H:%M")
 
 
-# --- Генерация уникального email для клиента
-async def generate_unique_client_email(
-    session,
-    user_id: int,
-    server: ServersVPN,
-    xui: XUIApi
-) -> str:
-    """
-    <COUNTRY>-<TGID>-<N>@artcry
-    """
+# --- Генерация уникального email для клиента <COUNTRY>-<TGID>-<N>@artcry
+async def generate_unique_client_email(session,user_id: int,server: ServersVPN,xui: XUIApi) -> str:
 
     country = await session.get(CountriesVPN, server.idCountry)
     country_code = country.nameCountry.upper()[:2]
