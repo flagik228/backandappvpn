@@ -62,33 +62,6 @@ class XUIApi:
     
 
     # ————————— CLIENTS —————————
-    """
-    async def add_client(self, inbound_id: int, email: str, days: int):
-        await self.login()
-
-        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
-        if not inbound:
-            raise Exception("Inbound не найден")
-
-        expiry = int(
-            (datetime.utcnow() + timedelta(days=days)).timestamp() * 1000
-        )
-
-        client = Client(
-            id=str(uuid.uuid4()),
-            email=email,
-            enable=True,
-            expiryTime=expiry
-        )
-
-        await asyncio.to_thread(self.api.client.add, inbound_id, [client])
-        return {
-            "uuid": client.id,
-            "email": client.email,
-            "expiry_time": client.expiryTime
-        }
-    """
-    
     async def add_client(self, inbound_id: int, email: str, days: int):
         await self.login()
 
@@ -125,7 +98,7 @@ class XUIApi:
 
         for client in inbound.settings.clients or []:
             if client.email == email:
-                client.expiryTime = max(client.expiryTime or 0, now_ms) + days * 86400000
+                client.expiry_time = max(client.expiry_time or 0, now_ms) + days * 86400000
                 client.enable = True
                 await asyncio.to_thread(self.api.client.update, client.id, client)
                 return True
