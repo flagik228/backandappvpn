@@ -266,7 +266,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
             idUser=user_id,
             idServerVPN=server_id,
             provider="xui",
-            provider_key_id=client_email,  # ← ВАЖНО
+            provider_key_id = client["uuid"], # заменил!!!
             access_data=access_link,
             created_at=now,
             expires_at=expires_at,
@@ -322,7 +322,7 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
         # 🔥 ПРОДЛЯЕМ В XUI
         await xui.extend_client(
             inbound_id=inbound.id,
-            email=vpn_key.provider_key_id,
+            client_uuid=vpn_key.provider_key_id,
             days=tariff.days
         )
 
