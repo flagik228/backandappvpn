@@ -1,25 +1,27 @@
 import uuid
 import asyncio
-import httpx
-import ssl
+import requests
+import urllib3
 from datetime import datetime, timedelta
+
+# ============================
+# 🔥 FIX SSL FOR py3xui
+# ============================
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+_old_request = requests.Session.request
+
+def _patched_request(self, method, url, **kwargs):
+    kwargs["verify"] = False
+    return _old_request(self, method, url, **kwargs)
+
+requests.Session.request = _patched_request
+# ============================
+
 from py3xui import Api
 from py3xui.client.client import Client  # корректный импорт клиента
 
 
-
-# ==========================================================
-# 🔥 CRITICAL FIX: force-disable SSL verification in requests
-# ==========================================================
-"""
-_old_client_init = httpx.Client.__init__
-
-def _patched_httpx_init(self, *args, **kwargs):
-    kwargs["verify"] = False
-    _old_client_init(self, *args, **kwargs)
-
-httpx.Client.__init__ = _patched_httpx_init
-"""
 
 class XUIApi:
     """API-обёртка над py3xui, совместимая с 3x-ui 2.x/3.x"""
@@ -30,7 +32,6 @@ class XUIApi:
             username=username,
             password=password
         )
-
         self._logged_in = False
         self._lock = asyncio.Lock()
 
@@ -38,11 +39,6 @@ class XUIApi:
         async with self._lock:
             if not self._logged_in:
                 await asyncio.to_thread(self.api.login)
-
-                # 🔥 ВАЖНО: session появляется ТОЛЬКО ПОСЛЕ login
-                if self.api.session:
-                    self.api.session.verify = False
-
                 self._logged_in = True
 
     # ---------------- INBOUNDS ----------------
@@ -73,7 +69,7 @@ class XUIApi:
         if not inbound:
             raise Exception("Inbound не найден")
 
-        expiry_time = int(
+        expiry = int(
             (datetime.utcnow() + timedelta(days=days)).timestamp() * 1000
         )
 
@@ -81,7 +77,7 @@ class XUIApi:
             id=str(uuid.uuid4()),
             email=email,
             enable=True,
-            expiryTime=expiry_time
+            expiryTime=expiry
         )
 
         await asyncio.to_thread(self.api.client.add, inbound_id, [client])
