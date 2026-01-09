@@ -81,7 +81,11 @@ class XUIApi:
         )
 
         await asyncio.to_thread(self.api.client.add, inbound_id, [client])
-        return client
+        return {
+            "uuid": client.id,
+            "email": client.email,
+            "expiry_time": client.expiryTime
+        }
 
 
     async def extend_client(self, inbound_id: int, email: str, days: int):
