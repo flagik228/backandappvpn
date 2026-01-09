@@ -2,18 +2,27 @@ import uuid
 import asyncio
 import httpx
 import ssl
+import urllib3
+import requests
 from datetime import datetime, timedelta
 from py3xui import Api
 from py3xui.client.client import Client  # корректный импорт клиента
 
 
 
-# 🔥 ГЛОБАЛЬНО отключаем проверку SSL (self-signed 3x-ui)
-ssl_context = ssl.create_default_context()
-ssl_context.check_hostname = False
-ssl_context.verify_mode = ssl.CERT_NONE
+# ==========================================================
+# 🔥 CRITICAL FIX: force-disable SSL verification in requests
+# ==========================================================
 
-httpx._config.DEFAULT_SSL_CONTEXT = ssl_context
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+_original_session_init = requests.Session.__init__
+
+def _patched_session_init(self, *args, **kwargs):
+    _original_session_init(self, *args, **kwargs)
+    self.verify = False
+
+requests.Session.__init__ = _patched_session_init
 
 class XUIApi:
     """API-обёртка над py3xui, совместимая с 3x-ui 2.x/3.x"""
@@ -57,7 +66,9 @@ class XUIApi:
     async def add_client(self, inbound_id: int, email: str, days: int):
         await self.login()
 
-        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
+        inbound = await asyncio.to_thread(
+            self.api.inbound.get_by_id, inbound_id
+        )
         if not inbound:
             raise Exception("Inbound не найден")
 
@@ -73,7 +84,11 @@ class XUIApi:
             expiryTime=expiry_time
         )
 
-        await asyncio.to_thread(self.api.client.add, inbound_id, [new_client])
+        await asyncio.to_thread(
+            self.api.client.add,
+            inbound_id,
+            [new_client]
+        )
 
         return {
             "uuid": client_uuid,
@@ -81,16 +96,17 @@ class XUIApi:
             "expiry_time": expiry_time
         }
 
-
     async def extend_client(self, inbound_id: int, email: str, days: int):
         await self.login()
 
-        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
+        inbound = await asyncio.to_thread(
+            self.api.inbound.get_by_id, inbound_id
+        )
         if not inbound:
             raise Exception("Inbound не найден")
 
         now_ms = int(datetime.utcnow().timestamp() * 1000)
-        
+
         for client in inbound.settings.clients or []:
             if client.email == email:
                 if client.expiryTime and client.expiryTime > now_ms:
@@ -108,7 +124,6 @@ class XUIApi:
                 return True
 
         raise Exception("Клиент не найден")
-
 
     async def remove_client(self, inbound_id: int, email: str):
         await self.login()
