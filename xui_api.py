@@ -93,39 +93,53 @@ class XUIApi:
     async def extend_client(self, inbound_id: int, email: str, days: int):
         await self.login()
 
-        # 🔥 1. Получаем клиента ТОЛЬКО через API
-        client = await asyncio.to_thread(
-            self.api.client.get_by_email,
-            email
+        inbound = await asyncio.to_thread(
+            self.api.inbound.get_by_id,
+            inbound_id
         )
+        if not inbound:
+            raise Exception("Inbound not found")
 
-        if not client:
-            raise Exception("Client not found in XUI")
+        clients = inbound.settings.clients or []
+
+        client_index = None
+        target_client = None
+
+        for idx, c in enumerate(clients):
+            if c.email == email:
+                client_index = idx
+                target_client = c
+                break
+
+        if target_client is None:
+            raise Exception("Client not found in inbound")
 
         now_ms = int(datetime.utcnow().timestamp() * 1000)
         add_ms = days * 86400000
 
-        current_expiry = client.expiry_time or 0
+        current_expiry = target_client.expiry_time or 0
 
         if current_expiry > now_ms:
-            client.expiry_time = current_expiry + add_ms
+            target_client.expiry_time = current_expiry + add_ms
         else:
-            client.expiry_time = now_ms + add_ms
+            target_client.expiry_time = now_ms + add_ms
 
-        client.enable = True
+        target_client.enable = True
 
-        # 🔥 2. ОБНОВЛЯЕМ по ЧИСЛОВОМУ ID
+        # 🔥 ВАЖНО: update по INDEX, а не UUID
         await asyncio.to_thread(
             self.api.client.update,
-            client.id,
-            client
+            inbound_id,
+            client_index,
+            target_client
         )
 
         return {
-            "email": client.email,
+            "email": target_client.email,
             "old_expiry": current_expiry,
-            "new_expiry": client.expiry_time
+            "new_expiry": target_client.expiry_time
         }
+
 
     async def remove_client(self, inbound_id: int, email: str):
         await self.login()
@@ -134,12 +148,12 @@ class XUIApi:
         if not inbound:
             raise Exception("Inbound не найден")
 
-        for client in inbound.settings.clients or []:
+        for idx, client in enumerate(inbound.settings.clients or []):
             if client.email == email:
                 await asyncio.to_thread(
                     self.api.client.delete,
                     inbound_id,
-                    client.id
+                    idx
                 )
                 return True
 
