@@ -1,9 +1,6 @@
 import uuid
 import asyncio
-import httpx
-import ssl
-import urllib3
-import requests
+
 from datetime import datetime, timedelta
 from py3xui import Api
 from py3xui.client.client import Client  # корректный импорт клиента
@@ -13,7 +10,7 @@ from py3xui.client.client import Client  # корректный импорт к�
 # ==========================================================
 # 🔥 CRITICAL FIX: force-disable SSL verification in requests
 # ==========================================================
-
+"""
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _original_session_init = requests.Session.__init__
@@ -23,6 +20,7 @@ def _patched_session_init(self, *args, **kwargs):
     self.verify = False
 
 requests.Session.__init__ = _patched_session_init
+"""
 
 class XUIApi:
     """API-обёртка над py3xui, совместимая с 3x-ui 2.x/3.x"""
@@ -31,7 +29,8 @@ class XUIApi:
         self.api = Api(
             host=api_url,
             username=username,
-            password=password
+            password=password,
+            ssl_verify = False
         )
         self._logged_in = False
         self._lock = asyncio.Lock()
