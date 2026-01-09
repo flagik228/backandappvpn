@@ -94,14 +94,45 @@ class XUIApi:
         await self.login()
 
         inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
+        if not inbound:
+            raise Exception("Inbound не найден")
+
         now_ms = int(datetime.utcnow().timestamp() * 1000)
+        add_ms = days * 86400000
 
         for client in inbound.settings.clients or []:
-            if client.email == email:
-                client.expiry_time = max(client.expiry_time or 0, now_ms) + days * 86400000
-                client.enable = True
-                await asyncio.to_thread(self.api.client.update, client.id, client)
-                return True
+            if client.email != email:
+                continue
+
+            # 🔥 БЕЗОПАСНО получаем текущее время истечения
+            current_expiry = None
+
+            if hasattr(client, "expiryTime") and client.expiryTime:
+                current_expiry = int(client.expiryTime)
+            elif hasattr(client, "expiry_time") and client.expiry_time:
+                current_expiry = int(client.expiry_time)
+
+            # если подписка ещё активна — продлеваем от неё
+            if current_expiry and current_expiry > now_ms:
+                new_expiry = current_expiry + add_ms
+            else:
+                new_expiry = now_ms + add_ms
+
+            # 🔥 ОБЯЗАТЕЛЬНО пишем именно expiryTime
+            client.expiryTime = new_expiry
+            client.enable = True
+
+            await asyncio.to_thread(
+                self.api.client.update,
+                client.id,
+                client
+            )
+
+            return {
+                "email": client.email,
+                "old_expiry": current_expiry,
+                "new_expiry": new_expiry
+            }
 
         raise Exception("Клиент не найден")
 
