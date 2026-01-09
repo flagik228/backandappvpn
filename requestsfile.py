@@ -126,7 +126,7 @@ async def sync_vpn_key_status(vpn_key: VPNKey, xui: XUIApi, inbound_id: int):
     now_ts = int(datetime.utcnow().timestamp() * 1000)
 
     for client in inbound.settings.clients or []:
-        if client.email == vpn_key.provider_key_id:
+        if client.email == vpn_key.provider_client_email:
             expiry = client.expiry_time
 
             if expiry is not None and expiry < now_ts:
@@ -266,7 +266,10 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
             idUser=user_id,
             idServerVPN=server_id,
             provider="xui",
-            provider_key_id = client["uuid"], # заменил!!!
+
+            provider_client_email=client_email,   # 🔑 ВАЖНО
+            provider_client_uuid=uuid,             # можно хранить, но не использовать
+
             access_data=access_link,
             created_at=now,
             expires_at=expires_at,
@@ -322,7 +325,7 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
         # 🔥 ПРОДЛЯЕМ В XUI
         await xui.extend_client(
             inbound_id=inbound.id,
-            client_uuid=vpn_key.provider_key_id,
+            client_email=vpn_key.provider_client_email,
             days=tariff.days
         )
 
@@ -376,9 +379,9 @@ async def remove_vpn_xui(vpn_key: VPNKey):
 
         try:
             await xui.remove_client(
-                inbound_id=inbound_id,
-                email=vpn_key.provider_key_id
-            )
+            inbound_id=inbound_id,
+            email=vpn_key.provider_client_email
+        )
         except Exception as e:
             # await xui.close()
             raise Exception(f"Не удалось удалить клиента на XUI: {e}")

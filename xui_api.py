@@ -89,24 +89,21 @@ class XUIApi:
         }
 
 
-    async def extend_client(self, inbound_id: int, client_uuid: str, days: int):
+    async def extend_client(self, inbound_id: int, client_email: str, days: int):
         await self.login()
 
-        inbound = await asyncio.to_thread(
-            self.api.inbound.get_by_id,
-            inbound_id
-        )
+        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
         if not inbound:
             raise Exception("Inbound not found")
 
         target = None
         for client in inbound.settings.clients or []:
-            if client.id == client_uuid:
+            if client.email == client_email:
                 target = client
                 break
 
         if not target:
-            raise Exception("Client not found by UUID")
+            raise Exception("Client not found by email")
 
         now_ms = int(datetime.utcnow().timestamp() * 1000)
         add_ms = days * 86400000
@@ -115,14 +112,15 @@ class XUIApi:
         target.expiry_time = current + add_ms if current > now_ms else now_ms + add_ms
         target.enable = True
 
+        # ❗ ОБЯЗАТЕЛЬНО обновляем ВЕСЬ inbound
         await asyncio.to_thread(
-            self.api.client.update,
+            self.api.inbound.update,
             inbound_id,
-            target
+            inbound
         )
 
         return {
-            "uuid": client_uuid,
+            "email": client_email,
             "old_expiry": current,
             "new_expiry": target.expiry_time
         }
