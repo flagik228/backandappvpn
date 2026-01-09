@@ -31,9 +31,6 @@ class XUIApi:
             password=password
         )
 
-        # 🔥 ВОТ ГЛАВНАЯ СТРОКА
-        self.api.session.verify = False
-
         self._logged_in = False
         self._lock = asyncio.Lock()
 
@@ -41,6 +38,11 @@ class XUIApi:
         async with self._lock:
             if not self._logged_in:
                 await asyncio.to_thread(self.api.login)
+
+                # 🔥 ВАЖНО: session появляется ТОЛЬКО ПОСЛЕ login
+                if self.api.session:
+                    self.api.session.verify = False
+
                 self._logged_in = True
 
     # ---------------- INBOUNDS ----------------
@@ -85,6 +87,7 @@ class XUIApi:
         await asyncio.to_thread(self.api.client.add, inbound_id, [client])
         return client
 
+
     async def extend_client(self, inbound_id: int, email: str, days: int):
         await self.login()
 
@@ -103,9 +106,7 @@ class XUIApi:
     async def remove_client(self, inbound_id: int, email: str):
         await self.login()
 
-        inbound = await asyncio.to_thread(
-            self.api.inbound.get_by_id, inbound_id
-        )
+        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
         if not inbound:
             raise Exception("Inbound не найден")
 
