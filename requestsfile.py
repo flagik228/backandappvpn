@@ -139,6 +139,23 @@ async def sync_vpn_key_status(vpn_key: VPNKey, xui: XUIApi, inbound_id: int):
     vpn_key.is_active = False
 
 
+async def recalc_server_load(session, server_id: int):
+    server = await session.get(ServersVPN, server_id)
+
+    active_count = await session.scalar(
+        select(func.count())
+        .select_from(VPNKey)
+        .where(
+            VPNKey.idServerVPN == server_id,
+            VPNKey.is_active == True,
+            VPNKey.expires_at > datetime.now(timezone.utc)
+        )
+    )
+
+    server.now_conn = active_count
+    server.is_active = active_count < server.max_conn
+
+
 
 # =====================================================================
 # --- СОЗДАНИЕ ЗАКАЗА ---    
@@ -290,6 +307,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         )
 
         session.add(subscription)
+        await recalc_server_load(session, server_id)
         await session.commit()
 
         return {
@@ -346,6 +364,7 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
             vpn_key.expires_at = now + timedelta(days=tariff.days)
 
         vpn_key.is_active = True
+        await recalc_server_load(session, server_id)
         
         subscription = await session.scalar(select(VPNSubscription).where(VPNSubscription.vpn_key_id == vpn_key.id))
 
@@ -426,6 +445,7 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
                 inbound = await xui.get_inbound_by_port(server.inbound_port)
                 if inbound:
                     await sync_vpn_key_status(key, xui, inbound.id)
+                    await recalc_server_load(session, server.idServerVPN)
             finally:
                 pass
                 # await xui.close()

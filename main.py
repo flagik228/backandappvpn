@@ -162,6 +162,25 @@ async def successful_payment(message: Message):
         order.status = "completed"
         await session.commit()
 
+        if order.purpose_order == "buy":
+            await message.answer(
+                f"✅ <b>VPN готов!</b>\n"
+                f"Сервер: {server.nameVPN}\n"
+                f"Действует до: {vpn_data['expires_at_human']}\n\n"
+                f"<b>Ваш ключ:</b>\n"
+                f"<code>{vpn_data['access_data']}</code>",
+                parse_mode="HTML"
+            )
+
+        elif order.purpose_order == "extension":
+            await message.answer(
+                f"♻️ <b>VPN успешно продлён!</b>\n"
+                f"➕ Добавлено дней: {vpn_data['days_added']}\n"
+                f"🕒 Новый срок: {vpn_data['expires_at_human']}",
+                parse_mode="HTML"
+            )
+    
+        """
         await message.answer(
             f"✅ <b>VPN готов!</b>\n"
             f"Сервер: {server.nameVPN}\n"
@@ -170,6 +189,7 @@ async def successful_payment(message: Message):
             f"<code>{vpn_data['access_data']}</code>",
             parse_mode="HTML"
         )
+        """
         
 # API
 # ======================
@@ -371,42 +391,7 @@ async def get_referrals(
 ):
     return await rq.get_referrals_list(tg_id)
 
-"""
-# подтверждение оплаты продления
-@app.post("/api/vpn/renew-success")
-async def renew_success(payload: str):
-    prefix, order_id = payload.split(":")
-    order_id = int(order_id)
 
-    async with async_session() as session:
-        order = await session.get(Order, order_id)
-        if not order or order.status != "pending":
-            raise HTTPException(400, "Invalid order")
-
-        order.status = "paid"
-
-        payment = Payment(
-            order_id=order.id,
-            provider="telegram_stars",
-            provider_payment_id="renew",
-            status="paid"
-        )
-        session.add(payment)
-        await session.flush()
-
-        order.status = "processing"
-
-        result = await pay_and_extend_vpn(
-            order.idUser,
-            order.server_id,
-            order.idTarif
-        )
-
-        order.status = "completed"
-        await session.commit()
-
-        return {"status": "ok", "vpn": result}
-"""
 
 
 
