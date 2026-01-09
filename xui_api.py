@@ -11,6 +11,7 @@ from py3xui.client.client import Client  # корректный импорт к�
 # ==========================================================
 # 🔥 CRITICAL FIX: force-disable SSL verification in requests
 # ==========================================================
+"""
 _old_client_init = httpx.Client.__init__
 
 def _patched_httpx_init(self, *args, **kwargs):
@@ -18,6 +19,7 @@ def _patched_httpx_init(self, *args, **kwargs):
     _old_client_init(self, *args, **kwargs)
 
 httpx.Client.__init__ = _patched_httpx_init
+"""
 
 class XUIApi:
     """API-обёртка над py3xui, совместимая с 3x-ui 2.x/3.x"""
@@ -26,9 +28,12 @@ class XUIApi:
         self.api = Api(
             host=api_url,
             username=username,
-            password=password,
-            ssl_verify = False
+            password=password
         )
+
+        # 🔥 ВОТ ГЛАВНАЯ СТРОКА
+        self.api.session.verify = False
+
         self._logged_in = False
         self._lock = asyncio.Lock()
 
@@ -62,61 +67,35 @@ class XUIApi:
     async def add_client(self, inbound_id: int, email: str, days: int):
         await self.login()
 
-        inbound = await asyncio.to_thread(
-            self.api.inbound.get_by_id, inbound_id
-        )
+        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
         if not inbound:
             raise Exception("Inbound не найден")
 
-        client_uuid = str(uuid.uuid4())
         expiry_time = int(
             (datetime.utcnow() + timedelta(days=days)).timestamp() * 1000
         )
 
-        new_client = Client(
-            id=client_uuid,
+        client = Client(
+            id=str(uuid.uuid4()),
             email=email,
             enable=True,
             expiryTime=expiry_time
         )
 
-        await asyncio.to_thread(
-            self.api.client.add,
-            inbound_id,
-            [new_client]
-        )
-
-        return {
-            "uuid": client_uuid,
-            "email": email,
-            "expiry_time": expiry_time
-        }
+        await asyncio.to_thread(self.api.client.add, inbound_id, [client])
+        return client
 
     async def extend_client(self, inbound_id: int, email: str, days: int):
         await self.login()
 
-        inbound = await asyncio.to_thread(
-            self.api.inbound.get_by_id, inbound_id
-        )
-        if not inbound:
-            raise Exception("Inbound не найден")
-
+        inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
         now_ms = int(datetime.utcnow().timestamp() * 1000)
 
         for client in inbound.settings.clients or []:
             if client.email == email:
-                if client.expiryTime and client.expiryTime > now_ms:
-                    client.expiryTime += days * 86400000
-                else:
-                    client.expiryTime = now_ms + days * 86400000
-
+                client.expiryTime = max(client.expiryTime or 0, now_ms) + days * 86400000
                 client.enable = True
-
-                await asyncio.to_thread(
-                    self.api.client.update,
-                    client.id,
-                    client
-                )
+                await asyncio.to_thread(self.api.client.update, client.id, client)
                 return True
 
         raise Exception("Клиент не найден")
