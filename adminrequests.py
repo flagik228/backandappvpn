@@ -577,9 +577,11 @@ async def admin_get_vpn_keys():
             "idUser": k.idUser,
             "idServerVPN": k.idServerVPN,
             "provider": k.provider,
-            "provider_key_id": k.provider_key_id,
+            "provider_client_email": k.provider_client_email,
+            "provider_client_uuid": k.provider_client_uuid,
             "access_data": k.access_data,
-            "expires_at": k.expires_at.isoformat(),
+            "created_at": k.created_at.isoformat(),
+            "expires_at": k.expires_at.isoformat() if k.expires_at else None,
             "is_active": k.is_active
         } for k in keys]
 

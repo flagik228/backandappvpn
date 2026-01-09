@@ -165,6 +165,8 @@ async def create_order(user_id: int,server_id: int,tariff_id: int,amount_usdt: D
         
 # форматирование даты 2026-01-04 22:46
 def format_datetime_ru(dt: datetime) -> str:
+    if dt.tzinfo:
+        dt = dt.astimezone(timezone.utc)
     return dt.strftime("%d.%m.%Y %H:%M")
 
 
@@ -329,10 +331,17 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
             days=tariff.days
         )
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
-        if vpn_key.expires_at and vpn_key.expires_at > now:
-            vpn_key.expires_at += timedelta(days=tariff.days)
+        if vpn_key.expires_at:
+            expires_at = vpn_key.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+        else:
+            expires_at = None
+
+        if expires_at and expires_at > now:
+            vpn_key.expires_at = expires_at + timedelta(days=tariff.days)
         else:
             vpn_key.expires_at = now + timedelta(days=tariff.days)
 

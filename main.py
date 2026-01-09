@@ -736,17 +736,13 @@ class VPNKeyCreate(BaseModel):
     idUser: int
     idServerVPN: int
     provider: str
-    provider_key_id: str
+    provider_client_email: str
+    provider_client_uuid: str | None = None
     access_data: str
     expires_at: datetime
     is_active: bool = True
 
 class VPNKeyUpdate(BaseModel):
-    idUser: int
-    idServerVPN: int
-    provider: str
-    provider_key_id: str
-    access_data: str
     expires_at: datetime
     is_active: bool
 
