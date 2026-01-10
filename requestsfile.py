@@ -507,8 +507,67 @@ async def get_referrals_list(tg_id: int):
         if not user:
             return []
 
-        referrals = await session.scalars(select(User).where(User.referrer_id == user.idUser))
-        return [{
-            "tg_id": r.tg_id,
-            "created_at": r.created_at.isoformat()
-        } for r in referrals]
+        rows = await session.execute(
+            select(
+                User.tg_username,
+                func.coalesce(func.sum(ReferralEarning.amount_usdt), 0)
+            )
+            .outerjoin(
+                ReferralEarning,
+                ReferralEarning.referrer_id == user.idUser
+            )
+            .where(User.referrer_id == user.idUser)
+            .group_by(User.idUser)
+        )
+
+        return [
+            {
+                "username": r[0],
+                "total_earned": str(r[1])
+            }
+            for r in rows
+        ]
+
+
+# =======================
+# --- REFERRAL PAYOUT ---
+# =======================
+async def process_referral_reward(session, order: Order):
+    user = await session.get(User, order.idUser)
+    if not user or not user.referrer_id:
+        return  # не реферал
+
+    # активный конфиг
+    config = await session.scalar(
+        select(ReferralConfig).where(ReferralConfig.is_active == True)
+    )
+    if not config:
+        return
+
+    percent = config.percent
+
+    amount_usdt = Decimal(order.amount) * Decimal(percent) / Decimal(100)
+
+    wallet = await session.scalar(
+        select(UserWallet).where(UserWallet.idUser == user.referrer_id)
+    )
+    if not wallet:
+        return
+
+    wallet.balance_usdt += amount_usdt
+
+    earning = ReferralEarning(
+        referrer_id=user.referrer_id,
+        order_id=order.id,
+        percent=percent,
+        amount_usdt=amount_usdt
+    )
+    session.add(earning)
+
+    tx = WalletTransaction(
+        wallet_id=wallet.id,
+        amount=amount_usdt,
+        type="referral",
+        description=f"Реферальное начисление {percent}% (+${amount_usdt})"
+    )
+    session.add(tx)

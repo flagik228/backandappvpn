@@ -32,6 +32,7 @@ class User(Base):
     __tablename__ = "users"
     idUser: Mapped[int] = mapped_column(primary_key=True)
     tg_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    tg_username: Mapped[str] = mapped_column(String(300), nullable=True)
     userRole: Mapped[str] = mapped_column(String(100), default="user")
     referrer_id: Mapped[int | None] = mapped_column(ForeignKey("users.idUser"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

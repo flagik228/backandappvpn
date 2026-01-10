@@ -14,7 +14,7 @@ from aiogram.methods import CreateInvoiceLink
 
 import requestsfile as rq
 import adminrequests as rqadm
-from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui
+from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward
 from models import init_db, async_session, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet, Payment
 
 BOT_TOKEN = "8423828272:AAHGuxxQEvTELPukIXl2eNL3p25fI9GGx0U"
@@ -108,6 +108,7 @@ async def register_user(data: RegisterUser):
 async def pre_checkout(q: PreCheckoutQuery):
     await q.answer(ok=True)
 
+
 @dp.message(F.successful_payment)
 async def successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
@@ -160,6 +161,7 @@ async def successful_payment(message: Message):
             return
 
         order.status = "completed"
+        await process_referral_reward(session, order)
         await session.commit()
 
         if order.purpose_order == "buy":
@@ -377,6 +379,11 @@ async def get_tariffs(server_id: int):
 
 # REFERRALS
 # ======================
+
+@app.get("/api/referrals/{tg_id}")
+async def referrals_list(tg_id: int):
+    return await rq.get_referrals_list(tg_id)
+
 @app.get("/api/admin/referrals-count/{tg_id}")
 async def get_referrals_count(
     tg_id: int = Path(..., description="TG ID пользователя")
