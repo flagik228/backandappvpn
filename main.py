@@ -52,24 +52,21 @@ async def telegram_webhook(request: Request):
 # ======================
 # REGISTER
 # ======================
-
 class RegisterUser(BaseModel):
     tg_id: int
+    tg_username: str | None = None
     referrer_tg_id: int | None = None
 
 
 @app.post("/api/register")
 async def register_user(data: RegisterUser):
     async with async_session() as session:
-        user = await session.scalar(
-            select(User).where(User.tg_id == data.tg_id)
-        )
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if user:
-            return {
-                "status": "exists",
-                "idUser": user.idUser,
-                "referrer_id": user.referrer_id
-            }
+            if data.tg_username and user.tg_username != data.tg_username:
+                user.tg_username = data.tg_username
+                await session.commit()
+            return {"status": "exists", "idUser": user.idUser}
 
         referrer_id = None
         if data.referrer_tg_id and data.referrer_tg_id != data.tg_id:
@@ -81,23 +78,17 @@ async def register_user(data: RegisterUser):
 
         user = User(
             tg_id=data.tg_id,
+            tg_username=data.tg_username,
             userRole="user",
             referrer_id=referrer_id
         )
         session.add(user)
         await session.flush()
 
-        wallet = UserWallet(idUser=user.idUser, balance_usdt=Decimal("0.0"))
-        session.add(wallet)
-
+        session.add(UserWallet(idUser=user.idUser))
         await session.commit()
-        await session.refresh(user)
 
-        return {
-            "status": "ok",
-            "idUser": user.idUser,
-            "referrer_id": referrer_id
-        }
+        return {"status": "ok", "idUser": user.idUser}
 
 
 

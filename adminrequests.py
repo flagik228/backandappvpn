@@ -19,9 +19,9 @@ async def admin_get_users():
         users = await session.scalars(select(User))
         return [{
             "idUser": u.idUser,
+            "tg_username": u.tg_username,
             "tg_id": u.tg_id,
             "userRole": u.userRole,
-            "referrer_id": u.referrer_id,
             "created_at": u.created_at.isoformat()
         } for u in users]
         
