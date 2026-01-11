@@ -503,27 +503,34 @@ async def get_referrals_count(tg_id: int) -> int:
 
 async def get_referrals_list(tg_id: int):
     async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        if not user:
+        referrer = await session.scalar(
+            select(User).where(User.tg_id == tg_id)
+        )
+        if not referrer:
             return []
 
         rows = await session.execute(
             select(
+                User.idUser,
                 User.tg_username,
                 func.coalesce(func.sum(ReferralEarning.amount_usdt), 0)
             )
+            .join(
+                User,
+                User.referrer_id == referrer.idUser
+            )
             .outerjoin(
                 ReferralEarning,
-                ReferralEarning.referrer_id == user.idUser
+                ReferralEarning.referrer_id == referrer.idUser
             )
-            .where(User.referrer_id == user.idUser)
-            .group_by(User.idUser)
+            .group_by(User.idUser, User.tg_username)
         )
 
         return [
             {
-                "username": r[0],
-                "total_earned": str(r[1])
+                "idUser": r.idUser,
+                "username": r.tg_username,
+                "total_earned": str(r[2])
             }
             for r in rows
         ]
