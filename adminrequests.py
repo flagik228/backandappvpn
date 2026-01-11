@@ -19,39 +19,38 @@ async def admin_get_users():
         users = await session.scalars(select(User))
         return [{
             "idUser": u.idUser,
-            "tg_username": u.tg_username,
             "tg_id": u.tg_id,
+            "tg_username": u.tg_username,
             "userRole": u.userRole,
+            "referrer_id": u.referrer_id,
             "created_at": u.created_at.isoformat()
         } for u in users]
         
-async def admin_add_user(tg_id: int, userRole: str = "user", referrer_id: int | None = None):
+async def admin_add_user(tg_id: int,tg_username: str | None,userRole: str,referrer_id: int | None):
     async with async_session() as session:
         user = User(
             tg_id=tg_id,
+            tg_username=tg_username,
             userRole=userRole,
             referrer_id=referrer_id
         )
         session.add(user)
         await session.flush()
 
-        wallet = UserWallet(
-            idUser=user.idUser,
-            balance_usdt=Decimal("0.0")
-        )
-        session.add(wallet)
-
+        session.add(UserWallet(idUser=user.idUser))
         await session.commit()
-        await session.refresh(user)
         return {"idUser": user.idUser}
 
-async def admin_update_user(user_id: int, userRole: str):
+async def admin_update_user(user_id: int, data: dict):
     async with async_session() as session:
         user = await session.get(User, user_id)
         if not user:
             raise ValueError("User not found")
 
-        user.userRole = userRole
+        for field in ["tg_id", "tg_username", "userRole", "referrer_id"]:
+            if field in data:
+                setattr(user, field, data[field])
+
         await session.commit()
         return {"status": "ok"}
 

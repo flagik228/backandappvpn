@@ -28,6 +28,14 @@ class Base(AsyncAttrs, DeclarativeBase):
 
 
     # юзеры
+class UserStart(Base):
+    __tablename__ = "user_starts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tg_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    referrer_tg_id: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
     idUser: Mapped[int] = mapped_column(primary_key=True)

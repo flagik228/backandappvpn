@@ -11,11 +11,12 @@ from sqlalchemy import select, update, delete
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
+from aiogram.filters import CommandStart
 
 import requestsfile as rq
 import adminrequests as rqadm
 from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward
-from models import init_db, async_session, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet, Payment
+from models import init_db, async_session, UserStart, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet, Payment
 
 BOT_TOKEN = "8423828272:AAHGuxxQEvTELPukIXl2eNL3p25fI9GGx0U"
 WEBHOOK_PATH = "/webhook"
@@ -49,6 +50,31 @@ async def telegram_webhook(request: Request):
 
 
 
+# Запуск бота (фиксация реф)======================
+@dp.message(CommandStart())
+async def start_cmd(message: Message):
+    referrer = None
+
+    if message.text and len(message.text.split()) > 1:
+        try:
+            referrer = int(message.text.split()[1])
+        except:
+            pass
+
+    async with async_session() as session:
+        existing = await session.scalar(select(UserStart).where(UserStart.tg_id == message.from_user.id))
+
+        if not existing:
+            session.add(UserStart(
+                tg_id=message.from_user.id,
+                referrer_tg_id=referrer
+            ))
+            await session.commit()
+
+    await message.answer("👋 Добро пожаловать!\n\nОткройте mini app, чтобы продолжить.")
+
+
+
 # ======================
 # REGISTER
 # ======================
@@ -63,16 +89,18 @@ async def register_user(data: RegisterUser):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if user:
+            # обновляем username если появился
             if data.tg_username and user.tg_username != data.tg_username:
                 user.tg_username = data.tg_username
                 await session.commit()
             return {"status": "exists", "idUser": user.idUser}
 
+        # 🔑 ищем referrer через start
+        start = await session.scalar(select(UserStart).where(UserStart.tg_id == data.tg_id))
+
         referrer_id = None
-        if data.referrer_tg_id and data.referrer_tg_id != data.tg_id:
-            ref_user = await session.scalar(
-                select(User).where(User.tg_id == data.referrer_tg_id)
-            )
+        if start and start.referrer_tg_id:
+            ref_user = await session.scalar(select(User).where(User.tg_id == start.referrer_tg_id))
             if ref_user:
                 referrer_id = ref_user.idUser
 
@@ -86,8 +114,12 @@ async def register_user(data: RegisterUser):
         await session.flush()
 
         session.add(UserWallet(idUser=user.idUser))
-        await session.commit()
 
+        # 🧹 удаляем временную запись
+        if start:
+            await session.delete(start)
+
+        await session.commit()
         return {"status": "ok", "idUser": user.idUser}
 
 
@@ -405,16 +437,17 @@ async def get_referrals(
 # ======================
 # ADMIN: USERS
 # ======================
-class AdminUserUpdate(BaseModel):
-    userRole: str
-
 class AdminUserCreate(BaseModel):
     tg_id: int
-    userRole: str = "user"
+    tg_username: str | None = None
+    userRole: str
     referrer_id: int | None = None
 
 class AdminUserUpdate(BaseModel):
+    tg_id: int
+    tg_username: str | None = None
     userRole: str
+    referrer_id: int | None = None
 
 
 @app.get("/api/admin/users")
@@ -423,11 +456,11 @@ async def admin_get_users():
 
 @app.post("/api/admin/users")
 async def admin_add_user(data: AdminUserCreate):
-    return await rqadm.admin_add_user(tg_id=data.tg_id, userRole=data.userRole, referrer_id=data.referrer_id)
+    return await rqadm.admin_add_user(**data.dict())
 
 @app.patch("/api/admin/users/{user_id}")
 async def admin_update_user(user_id: int, data: AdminUserUpdate):
-    return await rqadm.admin_update_user(user_id, data.userRole)
+    return await rqadm.admin_update_user(user_id, data.dict(exclude_unset=True))
 
 @app.delete("/api/admin/users/{user_id}")
 async def admin_delete_user(user_id: int):
