@@ -4,7 +4,8 @@ from models import (async_session, User, UserWallet, WalletTransaction, VPNKey,V
 from typing import List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from sqlalchemy import func
+from sqlalchemy import select, func
+from sqlalchemy.orm import aliased
 from urllib.parse import quote
 
 from xui_api import XUIApi
@@ -509,21 +510,22 @@ async def get_referrals_list(tg_id: int):
         if not referrer:
             return []
 
+        # алиас для рефералов
+        ReferralUser = aliased(User)
+
         rows = await session.execute(
             select(
-                User.idUser,
-                User.tg_username,
+                ReferralUser.idUser,
+                ReferralUser.tg_username,
                 func.coalesce(func.sum(ReferralEarning.amount_usdt), 0)
-            )
-            .join(
-                User,
-                User.referrer_id == referrer.idUser
             )
             .outerjoin(
                 ReferralEarning,
                 ReferralEarning.referrer_id == referrer.idUser
             )
-            .group_by(User.idUser, User.tg_username)
+            .where(ReferralUser.referrer_id == referrer.idUser)
+            .group_by(ReferralUser.idUser, ReferralUser.tg_username)
+            .order_by(ReferralUser.created_at.desc())
         )
 
         return [
