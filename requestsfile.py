@@ -504,13 +504,10 @@ async def get_referrals_count(tg_id: int) -> int:
 
 async def get_referrals_list(tg_id: int):
     async with async_session() as session:
-        referrer = await session.scalar(
-            select(User).where(User.tg_id == tg_id)
-        )
+        referrer = await session.scalar(select(User).where(User.tg_id == tg_id))
         if not referrer:
             return []
 
-        # алиас для рефералов
         ReferralUser = aliased(User)
 
         rows = await session.execute(
@@ -519,17 +516,18 @@ async def get_referrals_list(tg_id: int):
                 ReferralUser.tg_username,
                 func.coalesce(func.sum(ReferralEarning.amount_usdt), 0)
             )
+            .outerjoin(Order,Order.idUser == ReferralUser.idUser
+            )
             .outerjoin(
                 ReferralEarning,
-                ReferralEarning.referrer_id == referrer.idUser
+                ReferralEarning.order_id == Order.id
             )
             .where(ReferralUser.referrer_id == referrer.idUser)
             .group_by(ReferralUser.idUser, ReferralUser.tg_username)
             .order_by(ReferralUser.created_at.desc())
         )
 
-        return [
-            {
+        return [{
                 "idUser": r.idUser,
                 "username": r.tg_username,
                 "total_earned": str(r[2])
@@ -547,9 +545,7 @@ async def process_referral_reward(session, order: Order):
         return  # не реферал
 
     # активный конфиг
-    config = await session.scalar(
-        select(ReferralConfig).where(ReferralConfig.is_active == True)
-    )
+    config = await session.scalar(select(ReferralConfig).where(ReferralConfig.is_active == True))
     if not config:
         return
 
