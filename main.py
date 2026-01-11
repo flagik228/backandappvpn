@@ -259,8 +259,8 @@ async def create_invoice(data: CreateInvoiceRequest):
             server_id=server.idServerVPN,
             idTarif=tariff.idTarif,
             purpose_order="buy",
-            amount=stars_price,
-            currency="XTR",
+            amount=price_usdt,
+            currency="USDT",
             status="pending"
         )
         session.add(order)

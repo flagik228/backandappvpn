@@ -61,7 +61,7 @@ class WalletTransaction(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     wallet_id: Mapped[int] = mapped_column(ForeignKey("user_wallets.id", ondelete="CASCADE"))
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 6))
-    type: Mapped[str] = mapped_column(String(100))  # referral / deposit / withdrawal
+    type: Mapped[str] = mapped_column(String(200))  # referral / deposit / withdrawal
     description: Mapped[str] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -117,7 +117,7 @@ class Tariff(Base):
 class ExchangeRate(Base):
     __tablename__ = "exchange_rates"
     id: Mapped[int] = mapped_column(primary_key=True)
-    pair: Mapped[str] = mapped_column(String(50), unique=True)  # "XTR_USDT"
+    pair: Mapped[str] = mapped_column(String(100), unique=True)  # "XTR_USDT"
     rate: Mapped[Decimal] = mapped_column(Numeric(18, 8))   # 0.01301886
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     
@@ -130,9 +130,9 @@ class Order(Base):
     server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN"))
     idTarif: Mapped[int] = mapped_column(ForeignKey("tariffs.idTarif"))
     purpose_order: Mapped[str] = mapped_column(String(100)) # "buy" при покупке и "extension" при продлении
-    amount: Mapped[int] = mapped_column(Integer)
-    currency: Mapped[str] = mapped_column(String(10))  # XTR / USDT
-    status: Mapped[str] = mapped_column(String(30), default="pending")  # pending / paid / failed
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    currency: Mapped[str] = mapped_column(String(100))  # XTR / USDT
+    status: Mapped[str] = mapped_column(String(50), default="pending")  # pending / paid / failed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -141,9 +141,9 @@ class Payment(Base):
     __tablename__ = "payments"
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
-    provider: Mapped[str] = mapped_column(String(100))  # stars / cryptobot
+    provider: Mapped[str] = mapped_column(String(200))  # stars / cryptobot
     provider_payment_id: Mapped[str] = mapped_column(String(200))   # ID платежа у платёжного провайдера.
-    status: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
