@@ -204,17 +204,6 @@ async def successful_payment(message: Message):
                 f"🕒 Новый срок: {vpn_data['expires_at_human']}",
                 parse_mode="HTML"
             )
-    
-        """
-        await message.answer(
-            f"✅ <b>VPN готов!</b>\n"
-            f"Сервер: {server.nameVPN}\n"
-            f"Действует до: {vpn_data['expires_at_human']}\n\n"
-            f"<b>Ваш ключ:</b>\n"
-            f"<code>{vpn_data['access_data']}</code>",
-            parse_mode="HTML"
-        )
-        """
         
 # API
 # ======================
@@ -306,12 +295,11 @@ async def renew_invoice(data: RenewInvoiceRequest):
 
         server = await session.get(ServersVPN, vpn_key.idServerVPN)
 
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT")
-        )
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         if not rate:
             raise HTTPException(500, "Exchange rate not set")
 
+        price_usdt = Decimal(tariff.price_tarif)
         stars_price = int(Decimal(tariff.price_tarif) / rate.rate)
         if stars_price < 1:
             stars_price = 1
@@ -322,8 +310,8 @@ async def renew_invoice(data: RenewInvoiceRequest):
             server_id=server.idServerVPN,
             idTarif=tariff.idTarif,
             purpose_order="extension",
-            amount=stars_price,
-            currency="XTR",
+            amount=price_usdt,
+            currency="USDT",
             status="pending"
         )
 

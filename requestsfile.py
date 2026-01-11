@@ -379,6 +379,7 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
         return {
             "vpn_key_id": vpn_key.id,
             "access_data": vpn_key.access_data,
+            "days_added": tariff.days,
             "expires_at": vpn_key.expires_at.isoformat(),
             "expires_at_human": format_datetime_ru(vpn_key.expires_at)
         }
@@ -543,36 +544,36 @@ async def process_referral_reward(session, order: Order):
     user = await session.get(User, order.idUser)
     if not user or not user.referrer_id:
         return  # не реферал
-
-    # активный конфиг
     config = await session.scalar(select(ReferralConfig).where(ReferralConfig.is_active == True))
     if not config:
+        return
+    tariff = await session.get(Tariff, order.idTarif)
+    if not tariff:
         return
 
     percent = config.percent
 
-    amount_usdt = Decimal(order.amount) * Decimal(percent) / Decimal(100)
+    base_usdt = Decimal(tariff.price_tarif) # 🔥 ВСЕГДА считаем от USDT-цены тарифа
+    reward_usdt = (base_usdt * Decimal(percent) / Decimal(100)).quantize(Decimal("0.000001"))
 
-    wallet = await session.scalar(
-        select(UserWallet).where(UserWallet.idUser == user.referrer_id)
-    )
+    wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.referrer_id))
     if not wallet:
         return
 
-    wallet.balance_usdt += amount_usdt
+    wallet.balance_usdt += reward_usdt
 
     earning = ReferralEarning(
         referrer_id=user.referrer_id,
         order_id=order.id,
         percent=percent,
-        amount_usdt=amount_usdt
+        amount_usdt=reward_usdt
     )
     session.add(earning)
 
     tx = WalletTransaction(
         wallet_id=wallet.id,
-        amount=amount_usdt,
+        amount=reward_usdt,
         type="referral",
-        description=f"Реферальное начисление {percent}% (+${amount_usdt})"
+        description=f"Реферальное начисление {percent}% (+${reward_usdt})"
     )
     session.add(tx)
