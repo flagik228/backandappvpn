@@ -485,10 +485,8 @@ async def activate_reward_api(tg_id: int, reward_id: int, server_id: int):
             raise HTTPException(404, "User not found")
 
     await activate_reward(user.idUser, reward_id, server_id)
-    return {
-        "status": "ok",
-        "message": "reward_activated"
-    }
+
+    return {"status": "ok"}
 
 
 

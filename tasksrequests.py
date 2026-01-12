@@ -8,7 +8,6 @@ from requestsfile import pay_and_extend_vpn, create_vpn_xui
 from xui_api import XUIApi
 
 
-
 TASKS = [
     {
         "key": "welcome_bonus",
@@ -83,10 +82,13 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
     async with async_session() as session:
         async with session.begin():
 
-            reward = await session.scalar(select(UserReward).where(
+            reward = await session.scalar(
+                select(UserReward)
+                .where(
                     UserReward.id == reward_id,
                     UserReward.idUser == user_id
-                ).with_for_update() 
+                )
+                .with_for_update()
             )
 
             if not reward:
@@ -142,8 +144,11 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
                     tariff_days=reward.days
                 )
 
-            # 🔥 ПОМЕЧАЕМ НАГРАДУ ИСПОЛЬЗОВАННОЙ
+            # ✅ ПОМЕЧАЕМ НАГРАДУ ИСПОЛЬЗОВАННОЙ
             reward.is_activated = True
             reward.activated_server_id = server_id
             reward.activated_at = datetime.utcnow()
+
+        # 🔥 ВАЖНО
+        await session.commit()
 
