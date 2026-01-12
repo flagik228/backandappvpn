@@ -33,7 +33,11 @@ async def check_user_exists(user: User) -> bool:
 async def check_has_orders(user: User) -> bool:
     async with async_session() as session:
         return bool(
-            await session.scalar(select(exists().where(Order.idUser == user.idUser)))
+            await session.scalar(select(exists().where(
+                    Order.idUser == user.idUser,
+                    Order.status == "completed",
+                    Order.purpose_order == "buy"
+                )))
         )
 
 
@@ -85,21 +89,16 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
         if not server:
             raise Exception("Server not found")
 
-        vpn_key = await session.scalar(
-            select(VPNKey)
-            .where(
+        vpn_key = await session.scalar(select(VPNKey).where(
                 VPNKey.idUser == user_id,
-                VPNKey.idServerVPN == server_id,
-                VPNKey.is_active == True
+                VPNKey.idServerVPN == server_id
             )
         )
 
-        # --- ЕСЛИ VPN УЖЕ ЕСТЬ → ПРОДЛЯЕМ ---
+        # ====== EXTEND ======
         if vpn_key:
             xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
             inbound = await xui.get_inbound_by_port(server.inbound_port)
-            if not inbound:
-                raise Exception("Inbound not found")
 
             await xui.extend_client(
                 inbound_id=inbound.id,
@@ -120,7 +119,7 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
                 sub.expires_at = vpn_key.expires_at
                 sub.status = "active"
 
-        # --- ИНАЧЕ → СОЗДАЁМ НОВЫЙ VPN ---
+        # ====== CREATE ======
         else:
             await create_vpn_xui(
                 user_id=user_id,

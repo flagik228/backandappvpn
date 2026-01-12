@@ -457,6 +457,26 @@ async def get_rewards(tg_id: int):
         } for r in rewards]
 
 
+@app.get("/api/rewards/preview")
+async def reward_preview(tg_id: int, reward_id: int, server_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        reward = await session.get(UserReward, reward_id)
+
+        vpn_key = await session.scalar(
+            select(VPNKey)
+            .where(
+                VPNKey.idUser == user.idUser,
+                VPNKey.idServerVPN == server_id
+            )
+        )
+
+        return {
+            "mode": "extend" if vpn_key else "create",
+            "days": reward.days
+        }
+
+
 @app.post("/api/rewards/activate")
 async def activate_reward_api(tg_id: int, reward_id: int, server_id: int):
     async with async_session() as session:
