@@ -13,10 +13,12 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 from aiogram.filters import CommandStart
 
+from models import init_db, async_session, UserStart, User, UserTask, UserReward, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet, Payment
 import requestsfile as rq
 import adminrequests as rqadm
 from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward
-from models import init_db, async_session, UserStart, User, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet, Payment
+from tasksrequests import TASKS, check_and_complete_task, activate_reward
+
 
 BOT_TOKEN = "8423828272:AAHGuxxQEvTELPukIXl2eNL3p25fI9GGx0U"
 WEBHOOK_PATH = "/webhook"
@@ -270,9 +272,7 @@ async def create_invoice(data: CreateInvoiceRequest):
         return {"invoice_link": invoice_link} 
 
 
-
 # -------- ПРОДЛЕНИЕ
-
 class RenewInvoiceRequest(BaseModel):
     tg_id: int
     vpn_key_id: int
@@ -409,6 +409,63 @@ async def get_referrals(
 ):
     return await rq.get_referrals_list(tg_id)
 
+
+# ======================
+# TASKS
+# ======================
+@app.get("/api/tasks/{tg_id}")
+async def get_tasks(tg_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+
+        completed = await session.scalars(select(UserTask.task_key).where(UserTask.idUser == user.idUser))
+
+        completed_keys = set(completed)
+
+        return [{
+                **task,
+                "completed": task["key"] in completed_keys
+            }
+            for task in TASKS
+        ]
+
+
+@app.post("/api/tasks/check/{task_key}")
+async def check_task(task_key: str, tg_id: int):
+    task = next(t for t in TASKS if t["key"] == task_key)
+
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+
+    return await check_and_complete_task(user, task)
+
+
+@app.get("/api/rewards/{tg_id}")
+async def get_rewards(tg_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        rewards = await session.scalars(select(UserReward)
+            .where(
+                UserReward.idUser == user.idUser,
+                UserReward.is_activated == False
+            )
+        )
+
+        return [{
+            "id": r.id,
+            "days": r.days
+        } for r in rewards]
+
+
+@app.post("/api/rewards/activate")
+async def activate_reward_api(tg_id: int, reward_id: int, server_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+
+    await activate_reward(user.idUser, reward_id, server_id)
+    return {"status": "ok"}
 
 
 

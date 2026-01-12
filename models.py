@@ -3,7 +3,7 @@ from sqlalchemy.orm import (Mapped, DeclarativeBase, mapped_column)
 from sqlalchemy.ext.asyncio import (AsyncAttrs, async_sessionmaker, create_async_engine)
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import Column, Integer, ForeignKey, Numeric, Boolean
+from sqlalchemy import Column, Integer, ForeignKey, Numeric, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 from dotenv import load_dotenv
 import os
@@ -64,6 +64,28 @@ class WalletTransaction(Base):
     type: Mapped[str] = mapped_column(String(200))  # referral / deposit / withdrawal
     description: Mapped[str] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class UserTask(Base):
+    __tablename__ = "user_tasks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"))
+    task_key: Mapped[str] = mapped_column(String(100)) # example: welcome_bonus, first_purchase
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("idUser", "task_key", name="uq_user_task"),)
+
+
+class UserReward(Base):
+    __tablename__ = "user_rewards"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"))
+    reward_type: Mapped[str] = mapped_column(String(50)) # example: vpn_days
+    days: Mapped[int] = mapped_column(Integer)
+    is_activated: Mapped[bool] = mapped_column(Boolean, default=False)
+    activated_server_id: Mapped[int | None] = mapped_column(ForeignKey("servers_vpn.idServerVPN"),nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
 
     # категории VPN
 class TypesVPN(Base):
