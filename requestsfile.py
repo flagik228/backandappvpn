@@ -326,9 +326,7 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
         if not tariff:
             raise ValueError("Tariff not found")
 
-        vpn_key = await session.scalar(
-            select(VPNKey)
-            .where(VPNKey.idUser == user_id)
+        vpn_key = await session.scalar(select(VPNKey).where(VPNKey.idUser == user_id)
             .where(VPNKey.idServerVPN == server_id)
         )
 
@@ -347,8 +345,7 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
         await xui.extend_client(
             inbound_id=inbound.id,
             client_email=vpn_key.provider_client_email,
-            days=tariff.days
-        )
+            days=tariff.days)
 
         now = datetime.now(timezone.utc)
 
@@ -374,7 +371,6 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
             subscription.status = "active"
 
         await session.commit()
-        # await xui.close()
 
         return {
             "vpn_key_id": vpn_key.id,

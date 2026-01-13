@@ -4,9 +4,8 @@ import requests
 import urllib3
 from datetime import datetime, timedelta
 
-# ============================
+
 # 🔥 FIX SSL FOR py3xui
-# ============================
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _old_request = requests.Session.request
@@ -16,7 +15,7 @@ def _patched_request(self, method, url, **kwargs):
     return _old_request(self, method, url, **kwargs)
 
 requests.Session.request = _patched_request
-# ============================
+
 
 from py3xui import Api
 from py3xui.client.client import Client  # корректный импорт клиента
@@ -92,43 +91,57 @@ class XUIApi:
     async def extend_client(self, inbound_id: int, client_email: str, days: int):
         await self.login()
 
-        inbound = await asyncio.to_thread(
-            self.api.inbound.get_by_id,
-            inbound_id
-        )
+        inbound = await asyncio.to_thread(self.api.inbound.get_by_id,inbound_id)
         if not inbound:
             raise Exception("Inbound not found")
 
-        target = None
-        for client in inbound.settings.clients or []:
-            if client.email == client_email:
-                target = client
+        old_client = None
+        for c in inbound.settings.clients or []:
+            if c.email == client_email:
+                old_client = c
                 break
 
-        if not target:
+        if not old_client:
             raise Exception("Client not found")
 
+        # 🧠 считаем новое время
         now_ms = int(datetime.utcnow().timestamp() * 1000)
         add_ms = days * 86400000
 
-        # 🔴 1. выключаем клиента
-        target.enable = False
-        await asyncio.to_thread(self.api.inbound.update, inbound_id, inbound)
+        old_expiry = old_client.expiry_time or 0
+        new_expiry = (
+            old_expiry + add_ms
+            if old_expiry > now_ms
+            else now_ms + add_ms
+        )
 
-        # 🔁 2. пересчитываем срок
-        current = target.expiry_time or 0
-        target.expiry_time = current + add_ms if current > now_ms else now_ms + add_ms
+        client_uuid = old_client.id
 
-        # 🟢 3. включаем клиента
-        target.enable = True
+        # 1️⃣ удаляем клиента
+        inbound.settings.clients = [
+            c for c in inbound.settings.clients
+            if c.email != client_email
+        ]
 
-        # 🔥 4. СОХРАНЯЕМ inbound ЕЩЁ РАЗ
-        await asyncio.to_thread(self.api.inbound.update, inbound_id, inbound)
+        await asyncio.to_thread(self.api.inbound.update,inbound_id,inbound)
+        await asyncio.sleep(0.3)
 
-        return {
-            "email": client_email,
-            "new_expiry": target.expiry_time
-        }
+        # 2️⃣ создаём нового (С ТЕМ ЖЕ UUID)
+        new_client = Client(
+            id=client_uuid,
+            email=client_email,
+            enable=True,
+            expiry_time=new_expiry,
+            total_gb=0,
+            up=0,
+            down=0
+        )
+
+        inbound.settings.clients.append(new_client)
+
+        await asyncio.to_thread(self.api.inbound.update,inbound_id,inbound)
+
+        return {"email": client_email,"new_expiry": new_expiry}
 
 
     async def remove_client(self, inbound_id: int, client_uuid: str):

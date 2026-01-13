@@ -1,8 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal
-
-
 from fastapi import FastAPI, HTTPException, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -41,9 +39,7 @@ app = FastAPI(title="ArtCry VPN", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],)
 
 
-# ======================
 # TELEGRAM WEBHOOK
-# ======================
 @app.post(WEBHOOK_PATH)
 async def telegram_webhook(request: Request):
     update = Update.model_validate(await request.json(), context={"bot": bot})
@@ -52,7 +48,7 @@ async def telegram_webhook(request: Request):
 
 
 
-# Запуск бота (фиксация реф)======================
+# Запуск бота (фиксация реф)===
 @dp.message(CommandStart())
 async def start_cmd(message: Message):
     referrer = None
@@ -79,7 +75,6 @@ async def start_cmd(message: Message):
 
 # ======================
 # REGISTER
-# ======================
 class RegisterUser(BaseModel):
     tg_id: int
     tg_username: str | None = None
@@ -125,10 +120,8 @@ async def register_user(data: RegisterUser):
         return {"status": "ok", "idUser": user.idUser}
 
 
-
 # ======================
 # TELEGRAM HANDLERS
-# ======================
 @dp.pre_checkout_query()
 async def pre_checkout(q: PreCheckoutQuery):
     await q.answer(ok=True)
@@ -207,9 +200,9 @@ async def successful_payment(message: Message):
                 parse_mode="HTML"
             )
         
-# API
-# ======================
 
+# ======================
+# API
 class CreateInvoiceRequest(BaseModel):
     tg_id: int
     tariff_id: int
@@ -369,8 +362,6 @@ async def create_order_endpoint(data: OrderRequest):
 
 # ======================
 # PUBLIC
-# ======================
-
 @app.get("/api/vpn/servers")
 async def get_servers():
     return await rq.get_servers()
@@ -388,9 +379,9 @@ async def get_tariffs(server_id: int):
         raise HTTPException(status_code=500, detail=str(e))
     
 
-# REFERRALS
-# ======================
 
+# ======================
+# REFERRALS
 @app.get("/api/referrals/{tg_id}")
 async def referrals_list(tg_id: int):
     return await rq.get_referrals_list(tg_id)
@@ -412,7 +403,6 @@ async def get_referrals(
 
 # ======================
 # TASKS
-# ======================
 @app.get("/api/tasks/{tg_id}")
 async def get_tasks(tg_id: int):
     async with async_session() as session:
