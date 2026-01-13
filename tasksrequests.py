@@ -80,75 +80,67 @@ async def check_and_complete_task(user: User, task: dict):
 # ---------- Активация награды ----------
 async def activate_reward(user_id: int, reward_id: int, server_id: int):
     async with async_session() as session:
-        async with session.begin():
+        # async with session.begin():
 
-            reward = await session.scalar(
-                select(UserReward)
-                .where(
-                    UserReward.id == reward_id,
-                    UserReward.idUser == user_id
-                )
-                .with_for_update()
+        reward = await session.scalar(select(UserReward).where(
+                UserReward.id == reward_id,
+                UserReward.idUser == user_id
+            ).with_for_update()
+        )
+
+        if not reward:
+            raise HTTPException(404, "Reward not found")
+
+        if reward.is_activated:
+            raise HTTPException(400, "Reward already activated")
+
+        server = await session.get(ServersVPN, server_id)
+        if not server:
+            raise HTTPException(404, "Server not found")
+
+        vpn_key = await session.scalar(select(VPNKey).where(
+                VPNKey.idUser == user_id,
+                VPNKey.idServerVPN == server_id
+            )
+        )
+
+        # ===== EXTEND =====
+        if vpn_key:
+            xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
+            inbound = await xui.get_inbound_by_port(server.inbound_port)
+
+            await xui.extend_client(
+                inbound_id=inbound.id,
+                client_email=vpn_key.provider_client_email,
+                days=reward.days
             )
 
-            if not reward:
-                raise HTTPException(404, "Reward not found")
+            now = datetime.utcnow()
+            vpn_key.expires_at = (
+                vpn_key.expires_at + timedelta(days=reward.days)
+                if vpn_key.expires_at and vpn_key.expires_at > now
+                else now + timedelta(days=reward.days)
+            )
+            vpn_key.is_active = True
 
-            if reward.is_activated:
-                raise HTTPException(400, "Reward already activated")
+            sub = await session.scalar(select(VPNSubscription).where(VPNSubscription.vpn_key_id == vpn_key.id))
+            if sub:
+                sub.expires_at = vpn_key.expires_at
+                sub.status = "active"
 
-            server = await session.get(ServersVPN, server_id)
-            if not server:
-                raise HTTPException(404, "Server not found")
-
-            vpn_key = await session.scalar(
-                select(VPNKey)
-                .where(
-                    VPNKey.idUser == user_id,
-                    VPNKey.idServerVPN == server_id
-                )
+        # ===== CREATE =====
+        else:
+            await create_vpn_xui(
+                user_id=user_id,
+                server_id=server_id,
+                tariff_days=reward.days
             )
 
-            # ===== EXTEND =====
-            if vpn_key:
-                xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
-                inbound = await xui.get_inbound_by_port(server.inbound_port)
+        # ✅ ПОМЕЧАЕМ НАГРАДУ ИСПОЛЬЗОВАННОЙ
+        reward.is_activated = True
+        reward.activated_server_id = server_id
+        reward.activated_at = datetime.utcnow()
 
-                await xui.extend_client(
-                    inbound_id=inbound.id,
-                    client_email=vpn_key.provider_client_email,
-                    days=reward.days
-                )
-
-                now = datetime.utcnow()
-                vpn_key.expires_at = (
-                    vpn_key.expires_at + timedelta(days=reward.days)
-                    if vpn_key.expires_at and vpn_key.expires_at > now
-                    else now + timedelta(days=reward.days)
-                )
-                vpn_key.is_active = True
-
-                sub = await session.scalar(
-                    select(VPNSubscription)
-                    .where(VPNSubscription.vpn_key_id == vpn_key.id)
-                )
-                if sub:
-                    sub.expires_at = vpn_key.expires_at
-                    sub.status = "active"
-
-            # ===== CREATE =====
-            else:
-                await create_vpn_xui(
-                    user_id=user_id,
-                    server_id=server_id,
-                    tariff_days=reward.days
-                )
-
-            # ✅ ПОМЕЧАЕМ НАГРАДУ ИСПОЛЬЗОВАННОЙ
-            reward.is_activated = True
-            reward.activated_server_id = server_id
-            reward.activated_at = datetime.utcnow()
-
-        # 🔥 ВАЖНО
-        await session.commit()
+    # 🔥 ВАЖНО
+    await session.commit()
 
