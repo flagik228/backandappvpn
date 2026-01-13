@@ -461,11 +461,14 @@ async def get_rewards(tg_id: int):
 async def reward_preview(tg_id: int, reward_id: int, server_id: int):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
-        reward = await session.get(UserReward, reward_id)
+        if not user:
+            raise HTTPException(404, "User not found")
 
-        vpn_key = await session.scalar(
-            select(VPNKey)
-            .where(
+        reward = await session.get(UserReward, reward_id)
+        if not reward or reward.idUser != user.idUser:
+            raise HTTPException(404, "Reward not found")
+
+        vpn_key = await session.scalar(select(VPNKey).where(
                 VPNKey.idUser == user.idUser,
                 VPNKey.idServerVPN == server_id
             )

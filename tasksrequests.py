@@ -146,6 +146,5 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
         reward.activated_server_id = server_id
         reward.activated_at = datetime.utcnow()
 
-    # 🔥 ВАЖНО
-    await session.commit()
-
+        # 🔥 ВАЖНО
+        await session.commit()
