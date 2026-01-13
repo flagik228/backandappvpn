@@ -1,6 +1,6 @@
 from sqlalchemy import select, exists
 from sqlalchemy.exc import NoResultFound
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
 from models import async_session, User, Order, UserTask, UserReward, VPNKey, VPNSubscription, ServersVPN
@@ -104,6 +104,8 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
             )
         )
 
+        now = datetime.now(timezone.utc)
+        
         # ===== EXTEND =====
         if vpn_key:
             xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
@@ -115,15 +117,18 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
                 days=reward.days
             )
 
-            now = datetime.utcnow()
-            vpn_key.expires_at = (
-                vpn_key.expires_at + timedelta(days=reward.days)
-                if vpn_key.expires_at and vpn_key.expires_at > now
-                else now + timedelta(days=reward.days)
-            )
+            if vpn_key.expires_at and vpn_key.expires_at > now:
+                vpn_key.expires_at = vpn_key.expires_at + timedelta(days=reward.days)
+            else:
+                vpn_key.expires_at = now + timedelta(days=reward.days)
+
             vpn_key.is_active = True
 
-            sub = await session.scalar(select(VPNSubscription).where(VPNSubscription.vpn_key_id == vpn_key.id))
+            sub = await session.scalar(
+                select(VPNSubscription)
+                .where(VPNSubscription.vpn_key_id == vpn_key.id)
+            )
+
             if sub:
                 sub.expires_at = vpn_key.expires_at
                 sub.status = "active"
