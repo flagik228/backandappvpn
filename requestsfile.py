@@ -7,13 +7,11 @@ from decimal import Decimal
 from sqlalchemy import select, func
 from sqlalchemy.orm import aliased
 from urllib.parse import quote
-
 from xui_api import XUIApi
 
 
 # =======================
 # --- USERS ---
-# =======================
 async def add_user(tg_id: int, user_role: str = "user", referrer_id: int | None = None):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
