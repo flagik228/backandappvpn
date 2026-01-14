@@ -414,8 +414,21 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
 
 @app.post("/api/crypto/webhook")
 async def crypto_webhook(data: dict):
-    invoice_id = str(data["invoice_id"])
-    status = data["status"]
+    """
+    Webhook от CryptoBot
+    """
+    # 🧠 Проверяем тип апдейта
+    if data.get("update_type") != "invoice_paid":
+        return {"ok": True}
+
+    payload = data.get("payload", {})
+
+    invoice_id = str(payload.get("invoice_id"))
+    status = payload.get("status")
+    order_id = payload.get("payload")  # 🔥 ЭТО order.id
+
+    if not invoice_id or not order_id:
+        return {"ok": True}
 
     if status != "paid":
         return {"ok": True}
@@ -427,18 +440,21 @@ async def crypto_webhook(data: dict):
                 Payment.provider_payment_id == invoice_id
             )
         )
+
         if not payment:
             return {"ok": True}
 
-        order = await session.get(Order, payment.order_id)
-        if order.status != "pending":
+        order = await session.get(Order, int(order_id))
+        if not order or order.status != "pending":
             return {"ok": True}
 
-        order.status = "processing"
+        # ✅ отмечаем оплату
         payment.status = "paid"
+        order.status = "processing"
 
         tariff = await session.get(Tariff, order.idTarif)
 
+        # 🔥 СОЗДАЁМ VPN
         vpn_data = await create_vpn_xui(
             order.idUser,
             order.server_id,
@@ -446,7 +462,10 @@ async def crypto_webhook(data: dict):
         )
 
         order.status = "completed"
+
+        # 🎁 рефералка
         await process_referral_reward(session, order)
+
         await session.commit()
 
     return {"ok": True}
