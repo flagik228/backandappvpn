@@ -374,26 +374,29 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
         tariff = await session.get(Tariff, data.tariff_id)
 
         if not user or not tariff or not tariff.is_active:
-            raise HTTPException(404)
+            raise HTTPException(404, "Invalid user or tariff")
 
+        # 1️⃣ Создаём заказ
         order = Order(
             idUser=user.idUser,
             server_id=tariff.server_id,
             idTarif=tariff.idTarif,
             purpose_order="buy",
-            amount=tariff.price_tarif,
+            amount=Decimal(tariff.price_tarif),
             currency="USDT",
             status="pending"
         )
         session.add(order)
         await session.flush()
 
+        # 2️⃣ Создаём инвойс CryptoBot
         invoice = await crypto.create_invoice(
             asset="USDT",
             amount=float(tariff.price_tarif),
             payload=str(order.id)
         )
 
+        # 3️⃣ Сохраняем платёж
         payment = Payment(
             order_id=order.id,
             provider="cryptobot",
@@ -403,8 +406,9 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
         session.add(payment)
         await session.commit()
 
+        # 🔥 ВАЖНО: правильный URL
         return {
-            "invoice_url": invoice.pay_url
+            "invoice_url": invoice.mini_app_invoice_url
         }
 
 
