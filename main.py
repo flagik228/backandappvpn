@@ -16,6 +16,7 @@ import requestsfile as rq
 import adminrequests as rqadm
 from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward
 from tasksrequests import TASKS, check_and_complete_task, activate_reward
+from cryptopay_client import crypto
 
 
 BOT_TOKEN = "8423828272:AAHGuxxQEvTELPukIXl2eNL3p25fI9GGx0U"
@@ -120,8 +121,9 @@ async def register_user(data: RegisterUser):
         return {"status": "ok", "idUser": user.idUser}
 
 
-# ======================
+# === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =============================================
 # TELEGRAM HANDLERS
+
 @dp.pre_checkout_query()
 async def pre_checkout(q: PreCheckoutQuery):
     await q.answer(ok=True)
@@ -357,10 +359,99 @@ async def create_order_endpoint(data: OrderRequest):
         amount_stars = int(tariff.price_tarif / rate.rate)
 
         return await rq.create_order(user.idUser, data.server_id, data.tariff_id, Decimal(amount_stars), currency="XTR")
-    
 
 
-# ======================
+
+# -------- КРИПТА x Cryptobot
+class CryptoInvoiceRequest(BaseModel):
+    tg_id: int
+    tariff_id: int
+
+@app.post("/api/vpn/crypto-invoice")
+async def create_crypto_invoice(data: CryptoInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        tariff = await session.get(Tariff, data.tariff_id)
+
+        if not user or not tariff or not tariff.is_active:
+            raise HTTPException(404)
+
+        order = Order(
+            idUser=user.idUser,
+            server_id=tariff.server_id,
+            idTarif=tariff.idTarif,
+            purpose_order="buy",
+            amount=tariff.price_tarif,
+            currency="USDT",
+            status="pending"
+        )
+        session.add(order)
+        await session.flush()
+
+        invoice = await crypto.create_invoice(
+            asset="USDT",
+            amount=float(tariff.price_tarif),
+            payload=str(order.id)
+        )
+
+        payment = Payment(
+            order_id=order.id,
+            provider="cryptobot",
+            provider_payment_id=str(invoice.invoice_id),
+            status="pending"
+        )
+        session.add(payment)
+        await session.commit()
+
+        return {
+            "invoice_url": invoice.pay_url
+        }
+
+
+@app.post("/api/crypto/webhook")
+async def crypto_webhook(data: dict):
+    invoice_id = str(data["invoice_id"])
+    status = data["status"]
+
+    if status != "paid":
+        return {"ok": True}
+
+    async with async_session() as session:
+        payment = await session.scalar(
+            select(Payment).where(
+                Payment.provider == "cryptobot",
+                Payment.provider_payment_id == invoice_id
+            )
+        )
+        if not payment:
+            return {"ok": True}
+
+        order = await session.get(Order, payment.order_id)
+        if order.status != "pending":
+            return {"ok": True}
+
+        order.status = "processing"
+        payment.status = "paid"
+
+        tariff = await session.get(Tariff, order.idTarif)
+
+        vpn_data = await create_vpn_xui(
+            order.idUser,
+            order.server_id,
+            tariff.days
+        )
+
+        order.status = "completed"
+        await process_referral_reward(session, order)
+        await session.commit()
+
+    return {"ok": True}
+
+
+
+
+
+# ==================================================================
 # PUBLIC
 @app.get("/api/vpn/servers")
 async def get_servers():

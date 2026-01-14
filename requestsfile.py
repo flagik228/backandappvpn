@@ -383,7 +383,6 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
 
 # =======================
 # --- УДАЛЕНИЕ КЛЮЧА
-# =======================
 async def remove_vpn_xui(vpn_key: VPNKey):
     async with async_session() as session:
         server = await session.get(ServersVPN, vpn_key.idServerVPN)
@@ -421,7 +420,6 @@ async def remove_vpn_xui(vpn_key: VPNKey):
 
 # =======================
 # --- USER: MY VPNs ---
-# =======================
 async def get_my_vpns(tg_id: int) -> List[dict]:
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
@@ -466,7 +464,6 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
 
 # =======================
 # --- GET TARIFFS ---
-# =======================
 async def get_server_tariffs(server_id: int):
     async with async_session() as session:
         tariffs = await session.scalars(
@@ -479,10 +476,8 @@ async def get_server_tariffs(server_id: int):
         } for t in tariffs]
 
 
-
 # =======================
 # --- REFERRALS ---
-# =======================
 async def get_referrals_count(tg_id: int) -> int:
     async with async_session() as session:
         user = await session.scalar(
@@ -535,7 +530,6 @@ async def get_referrals_list(tg_id: int):
 
 # =======================
 # --- REFERRAL PAYOUT ---
-# =======================
 async def process_referral_reward(session, order: Order):
     user = await session.get(User, order.idUser)
     if not user or not user.referrer_id:
