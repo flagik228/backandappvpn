@@ -17,9 +17,10 @@ import adminrequests as rqadm
 from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward
 from tasksrequests import TASKS, check_and_complete_task, activate_reward
 from cryptopay_client import crypto
+import os
 
 
-BOT_TOKEN = "8423828272:AAHGuxxQEvTELPukIXl2eNL3p25fI9GGx0U"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_PATH = "/webhook"
 
 bot = Bot(BOT_TOKEN)

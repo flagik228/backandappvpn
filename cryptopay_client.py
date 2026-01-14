@@ -1,3 +1,5 @@
 from aiocryptopay import AioCryptoPay, Networks
+import os
 
-crypto = AioCryptoPay(token="53082:AAfiDYFtfP5o2mtMDXC5HjRMTCVHYCgbOD5", network=Networks.TEST_NET)
+token = os.getenv("CRYPTOPAY_TOKEN")
+crypto = AioCryptoPay(token, network=Networks.TEST_NET)
