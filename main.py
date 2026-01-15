@@ -413,34 +413,29 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
         }
 
 
-@app.post("/api/crypto/webhook")
+@app.post("/api/crypto/webhook") # webhook Cryptobot
 async def crypto_webhook(data: dict):
-    """
-    Webhook от CryptoBot
-    """
     # 🧠 Проверяем тип апдейта
     if data.get("update_type") != "invoice_paid":
         return {"ok": True}
 
     payload = data.get("payload", {})
-
     invoice_id = str(payload.get("invoice_id"))
-    status = payload.get("status")
+    #status = payload.get("status")
     order_id = payload.get("payload")  # 🔥 ЭТО order.id
 
     if not invoice_id or not order_id:
         return {"ok": True}
 
-    if status != "paid":
-        return {"ok": True}
+    #if status != "paid":
+        #return {"ok": True}
 
     async with async_session() as session:
         payment = await session.scalar(
             select(Payment).where(
                 Payment.provider == "cryptobot",
                 Payment.provider_payment_id == invoice_id
-            )
-        )
+            ))
 
         if not payment:
             return {"ok": True}
@@ -454,20 +449,33 @@ async def crypto_webhook(data: dict):
         order.status = "processing"
 
         tariff = await session.get(Tariff, order.idTarif)
+        server = await session.get(ServersVPN, order.server_id)
+        user = await session.get(User, order.idUser)
 
         # 🔥 СОЗДАЁМ VPN
-        vpn_data = await create_vpn_xui(
-            order.idUser,
-            order.server_id,
-            tariff.days
-        )
+        try:
+            vpn_data = await create_vpn_xui(order.idUser,order.server_id,tariff.days)
+        except Exception:
+            order.status = "failed"
+            await session.commit()
+            return {"ok": True}
 
         order.status = "completed"
-
         # 🎁 рефералка
         await process_referral_reward(session, order)
-
         await session.commit()
+        
+        await bot.send_message(
+            chat_id=user.tg_id,
+            text=(
+                f"✅ <b>VPN готов!</b>\n"
+                f"Сервер: {server.nameVPN}\n"
+                f"Действует до: {vpn_data['expires_at_human']}\n\n"
+                f"<b>Ваш ключ:</b>\n"
+                f"<code>{vpn_data['access_data']}</code>"
+            ),
+            parse_mode="HTML"
+        )
 
     return {"ok": True}
 
