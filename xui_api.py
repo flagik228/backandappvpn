@@ -3,9 +3,10 @@ import asyncio
 import requests
 import urllib3
 from datetime import datetime, timedelta
+from py3xui import Api
+from py3xui.client.client import Client  # корректный импорт клиента
 
 
-# 🔥 FIX SSL FOR py3xui
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _old_request = requests.Session.request
@@ -15,11 +16,6 @@ def _patched_request(self, method, url, **kwargs):
     return _old_request(self, method, url, **kwargs)
 
 requests.Session.request = _patched_request
-
-
-from py3xui import Api
-from py3xui.client.client import Client  # корректный импорт клиента
-
 
 
 class XUIApi:

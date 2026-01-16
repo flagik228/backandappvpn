@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import select, update, delete
+import os
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
@@ -17,7 +18,7 @@ import adminrequests as rqadm
 from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward, get_user_wallet
 from tasksrequests import TASKS, check_and_complete_task, activate_reward
 from cryptopay_client import crypto
-import os
+from scheduler import start_scheduler
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -33,8 +34,10 @@ dp = Dispatcher()
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     await init_db()
+    start_scheduler()
     print("✅ VPN backend ready!")
     yield
+
 
 app = FastAPI(title="ArtCry VPN", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],)
