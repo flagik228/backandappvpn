@@ -420,44 +420,39 @@ async def remove_vpn_xui(vpn_key: VPNKey):
 # --- USER: MY VPNs ---
 async def get_my_vpns(tg_id: int) -> List[dict]:
     async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        user = await session.scalar(
+            select(User).where(User.tg_id == tg_id)
+        )
         if not user:
             return []
+
+        now = datetime.now(timezone.utc)
 
         rows = await session.execute(
             select(VPNSubscription, VPNKey, ServersVPN)
             .join(VPNKey, VPNSubscription.vpn_key_id == VPNKey.id)
             .join(ServersVPN, VPNKey.idServerVPN == ServersVPN.idServerVPN)
             .where(VPNSubscription.idUser == user.idUser)
+            .order_by(VPNSubscription.expires_at.desc())
         )
 
         result = []
 
         for sub, key, server in rows:
-            xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
-            try:
-                inbound = await xui.get_inbound_by_port(server.inbound_port)
-                if inbound:
-                    await sync_vpn_key_status(key, xui, inbound.id)
-                    await recalc_server_load(session, server.idServerVPN)
-            finally:
-                pass
-                # await xui.close()
-
-            sub.status = "active" if key.is_active else "expired"
+            is_active = key.expires_at and key.expires_at > now
 
             result.append({
                 "vpn_key_id": key.id,
                 "server_id": server.idServerVPN,
                 "serverName": server.nameVPN,
                 "access_data": key.access_data,
-                "expires_at": key.expires_at.isoformat() if key.expires_at else None,
-                "is_active": key.is_active,
-                "status": sub.status
+                "expires_at": key.expires_at.isoformat(),
+                "is_active": is_active,
+                "status": "active" if is_active else "expired"
             })
 
-        await session.commit()
         return result
+
     
 
 # =======================
