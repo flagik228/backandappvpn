@@ -37,7 +37,6 @@ async def lifespan(app_: FastAPI):
     yield
 
 app = FastAPI(title="ArtCry VPN", lifespan=lifespan)
-
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],)
 
 
@@ -65,10 +64,7 @@ async def start_cmd(message: Message):
         existing = await session.scalar(select(UserStart).where(UserStart.tg_id == message.from_user.id))
 
         if not existing:
-            session.add(UserStart(
-                tg_id=message.from_user.id,
-                referrer_tg_id=referrer
-            ))
+            session.add(UserStart(tg_id=message.from_user.id, referrer_tg_id=referrer))
             await session.commit()
 
     await message.answer("👋 Добро пожаловать!\n\nОткройте mini app, чтобы продолжить.")
@@ -114,7 +110,7 @@ async def register_user(data: RegisterUser):
 
         session.add(UserWallet(idUser=user.idUser))
 
-        # 🧹 удаляем временную запись
+        # удаляем временную запись
         if start:
             await session.delete(start)
 
@@ -213,22 +209,18 @@ class CreateInvoiceRequest(BaseModel):
 @app.post("/api/vpn/create_invoice")
 async def create_invoice(data: CreateInvoiceRequest):
     async with async_session() as session:
-        # 1) Проверка пользователя
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # 2) Тариф
         tariff = await session.scalar(select(Tariff).where(Tariff.idTarif == data.tariff_id))
         if not tariff or not tariff.is_active:
             raise HTTPException(status_code=404, detail="Tariff not found")
 
-        # 3) Сервер
         server = await session.scalar(select(ServersVPN).where(ServersVPN.idServerVPN == tariff.server_id))
         if not server:
             raise HTTPException(status_code=404, detail="Server not found")
 
-        # 4) Курс XTR/USDT
         rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         if not rate:
             raise HTTPException(status_code=400, detail="Exchange rate not set")
@@ -251,11 +243,10 @@ async def create_invoice(data: CreateInvoiceRequest):
             status="pending"
         )
         session.add(order)
-        await session.flush()  # присвоит order.idOrder
-        await session.commit() # сохранение окончательно
+        await session.flush()
+        await session.commit()
         
-        # 7) Возврат данных для фронта (Telegram Mini App)
-        
+        # 7) Возврат данных для фронта (TG App)
         invoice_link = await bot(
             CreateInvoiceLink(
                 title=f"VPN {tariff.days} дней",
@@ -265,7 +256,7 @@ async def create_invoice(data: CreateInvoiceRequest):
                 prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)]
             )
         )
-        return {"invoice_link": invoice_link} 
+        return {"invoice_link": invoice_link, "order_id": order.id} 
 
 
 # -------- ПРОДЛЕНИЕ
@@ -330,7 +321,7 @@ async def renew_invoice(data: RenewInvoiceRequest):
             )
         )
 
-        return {"invoice_link": invoice_link}
+        return {"invoice_link": invoice_link, "order_id": order.id} 
 
 
 
@@ -377,7 +368,6 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
         if not user or not tariff or not tariff.is_active:
             raise HTTPException(404, "Invalid user or tariff")
 
-        # 1️⃣ Создаём заказ
         order = Order(
             idUser=user.idUser,
             server_id=tariff.server_id,
@@ -397,7 +387,6 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
             payload=str(order.id)
         )
 
-        # 3️⃣ Сохраняем платёж
         payment = Payment(
             order_id=order.id,
             provider="cryptobot",
@@ -407,10 +396,8 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
         session.add(payment)
         await session.commit()
 
-        # 🔥 ВАЖНО: правильный URL
         return {
-            "invoice_url": invoice.mini_app_invoice_url,
-            "order_id": order.id
+            "invoice_url": invoice.mini_app_invoice_url, "order_id": order.id
         }
 
 
@@ -440,7 +427,7 @@ async def crypto_webhook(data: dict):
         if not order or order.status != "pending":
             return {"ok": True}
 
-        # ✅ отмечаем оплату
+        # отмечаем оплату
         payment.status = "paid"
         order.status = "processing"
 
