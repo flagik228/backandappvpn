@@ -415,14 +415,13 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
 
 @app.post("/api/crypto/webhook") # webhook Cryptobot
 async def crypto_webhook(data: dict):
-    # 🧠 Проверяем тип апдейта
     if data.get("update_type") != "invoice_paid":
         return {"ok": True}
 
     payload = data.get("payload", {})
     invoice_id = str(payload.get("invoice_id"))
     #status = payload.get("status")
-    order_id = payload.get("payload")  # 🔥 ЭТО order.id
+    order_id = payload.get("payload")
 
     if not invoice_id or not order_id:
         return {"ok": True}
@@ -452,7 +451,7 @@ async def crypto_webhook(data: dict):
         server = await session.get(ServersVPN, order.server_id)
         user = await session.get(User, order.idUser)
 
-        # 🔥 СОЗДАЁМ VPN
+        # СОЗДАЁМ VPN
         try:
             vpn_data = await create_vpn_xui(order.idUser,order.server_id,tariff.days)
         except Exception:
@@ -461,7 +460,6 @@ async def crypto_webhook(data: dict):
             return {"ok": True}
 
         order.status = "completed"
-        # 🎁 рефералка
         await process_referral_reward(session, order)
         await session.commit()
         
