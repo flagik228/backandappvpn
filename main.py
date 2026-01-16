@@ -14,7 +14,7 @@ from aiogram.filters import CommandStart
 from models import init_db, async_session, UserStart, User, UserTask, UserReward, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet, Payment
 import requestsfile as rq
 import adminrequests as rqadm
-from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward
+from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward, get_user_wallet
 from tasksrequests import TASKS, check_and_complete_task, activate_reward
 from cryptopay_client import crypto
 import os
@@ -118,87 +118,16 @@ async def register_user(data: RegisterUser):
         return {"status": "ok", "idUser": user.idUser}
 
 
+# подгрузка баланса пользователя
+@app.get("/api/user/wallet/{tg_id}")
+async def get_wallet(tg_id: int):
+    wallet = await get_user_wallet(tg_id)
+    if not wallet:
+        raise HTTPException(404, "Wallet not found")
+    return wallet
+
+
 # === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =============================================
-# TELEGRAM HANDLERS
-
-@dp.pre_checkout_query()
-async def pre_checkout(q: PreCheckoutQuery):
-    await q.answer(ok=True)
-
-
-@dp.message(F.successful_payment)
-async def successful_payment(message: Message):
-    payload = message.successful_payment.invoice_payload
-
-    prefix, order_id = payload.split(":")
-    order_id = int(order_id)
-
-    async with async_session() as session:
-        order = await session.get(Order, order_id)
-        if not order or order.status != "pending":
-            return
-
-        order.status = "paid"
-
-        payment = Payment(
-            order_id=order.id,
-            provider="telegram_stars",
-            provider_payment_id=message.successful_payment.telegram_payment_charge_id,
-            status="paid"
-        )
-        session.add(payment)
-        await session.flush()
-
-        order.status = "processing"
-
-        tariff = await session.get(Tariff, order.idTarif)
-        server = await session.get(ServersVPN, order.server_id)
-
-        try:
-            if order.purpose_order == "buy":
-                vpn_data = await create_vpn_xui(
-                    order.idUser,
-                    order.server_id,
-                    tariff.days
-                )
-
-            elif order.purpose_order == "extension":
-                vpn_data = await pay_and_extend_vpn(
-                    order.idUser,
-                    order.server_id,
-                    order.idTarif
-                )
-            else:
-                raise Exception("Unknown order purpose")
-
-        except Exception as e:
-            order.status = "failed"
-            await session.commit()
-            await message.answer(f"❌ Ошибка: {e}")
-            return
-
-        order.status = "completed"
-        await process_referral_reward(session, order)
-        await session.commit()
-
-        if order.purpose_order == "buy":
-            await message.answer(
-                f"✅ <b>VPN готов!</b>\n"
-                f"Сервер: {server.nameVPN}\n"
-                f"Действует до: {vpn_data['expires_at_human']}\n\n"
-                f"<b>Ваш ключ:</b>\n"
-                f"<code>{vpn_data['access_data']}</code>",
-                parse_mode="HTML"
-            )
-
-        elif order.purpose_order == "extension":
-            await message.answer(
-                f"♻️ <b>VPN успешно продлён!</b>\n"
-                f"➕ Добавлено дней: {vpn_data['days_added']}\n"
-                f"🕒 Новый срок: {vpn_data['expires_at_human']}",
-                parse_mode="HTML"
-            )
-        
 
 # ======================
 # API
@@ -351,6 +280,86 @@ async def create_order_endpoint(data: OrderRequest):
         amount_stars = int(tariff.price_tarif / rate.rate)
 
         return await rq.create_order(user.idUser, data.server_id, data.tariff_id, Decimal(amount_stars), currency="XTR")
+
+
+# TELEGRAM HANDLERS
+@dp.pre_checkout_query()
+async def pre_checkout(q: PreCheckoutQuery):
+    await q.answer(ok=True)
+
+
+@dp.message(F.successful_payment)
+async def successful_payment(message: Message):
+    payload = message.successful_payment.invoice_payload
+
+    prefix, order_id = payload.split(":")
+    order_id = int(order_id)
+
+    async with async_session() as session:
+        order = await session.get(Order, order_id)
+        if not order or order.status != "pending":
+            return
+
+        order.status = "paid"
+
+        payment = Payment(
+            order_id=order.id,
+            provider="telegram_stars",
+            provider_payment_id=message.successful_payment.telegram_payment_charge_id,
+            status="paid"
+        )
+        session.add(payment)
+        await session.flush()
+
+        order.status = "processing"
+
+        tariff = await session.get(Tariff, order.idTarif)
+        server = await session.get(ServersVPN, order.server_id)
+
+        try:
+            if order.purpose_order == "buy":
+                vpn_data = await create_vpn_xui(
+                    order.idUser,
+                    order.server_id,
+                    tariff.days
+                )
+
+            elif order.purpose_order == "extension":
+                vpn_data = await pay_and_extend_vpn(
+                    order.idUser,
+                    order.server_id,
+                    order.idTarif
+                )
+            else:
+                raise Exception("Unknown order purpose")
+
+        except Exception as e:
+            order.status = "failed"
+            await session.commit()
+            await message.answer(f"❌ Ошибка: {e}")
+            return
+
+        order.status = "completed"
+        await process_referral_reward(session, order)
+        await session.commit()
+
+        if order.purpose_order == "buy":
+            await message.answer(
+                f"✅ <b>VPN готов!</b>\n"
+                f"Сервер: {server.nameVPN}\n"
+                f"Действует до: {vpn_data['expires_at_human']}\n\n"
+                f"<b>Ваш ключ:</b>\n"
+                f"<code>{vpn_data['access_data']}</code>",
+                parse_mode="HTML"
+            )
+
+        elif order.purpose_order == "extension":
+            await message.answer(
+                f"♻️ <b>VPN успешно продлён!</b>\n"
+                f"➕ Добавлено дней: {vpn_data['days_added']}\n"
+                f"🕒 Новый срок: {vpn_data['expires_at_human']}",
+                parse_mode="HTML"
+            )
 
 
 
