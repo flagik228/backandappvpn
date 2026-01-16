@@ -409,7 +409,8 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
 
         # 🔥 ВАЖНО: правильный URL
         return {
-            "invoice_url": invoice.mini_app_invoice_url
+            "invoice_url": invoice.mini_app_invoice_url,
+            "order_id": order.id
         }
 
 
@@ -420,14 +421,10 @@ async def crypto_webhook(data: dict):
 
     payload = data.get("payload", {})
     invoice_id = str(payload.get("invoice_id"))
-    #status = payload.get("status")
     order_id = payload.get("payload")
 
     if not invoice_id or not order_id:
         return {"ok": True}
-
-    #if status != "paid":
-        #return {"ok": True}
 
     async with async_session() as session:
         payment = await session.scalar(
@@ -476,6 +473,19 @@ async def crypto_webhook(data: dict):
         )
 
     return {"ok": True}
+
+
+# Проверка успешного заказа после покупки
+@app.get("/api/order/status/{order_id}")
+async def get_order_status(order_id: int):
+    async with async_session() as session:
+        order = await session.get(Order, order_id)
+        if not order:
+            raise HTTPException(404, "Order not found")
+
+        return {
+            "status": order.status
+        }
 
 
 
