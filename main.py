@@ -118,13 +118,20 @@ async def register_user(data: RegisterUser):
         return {"status": "ok", "idUser": user.idUser}
 
 
-# подгрузка баланса пользователя
+# баланс юзера
 @app.get("/api/user/wallet/{tg_id}")
 async def get_wallet(tg_id: int):
     wallet = await get_user_wallet(tg_id)
     if not wallet:
         raise HTTPException(404, "Wallet not found")
     return wallet
+
+@app.get("/api/vpn/status/{tg_id}")
+async def vpn_status(tg_id: int):
+    active = await rq.has_active_subscription(tg_id)
+    return {
+        "active": active
+    }
 
 
 # === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =============================================

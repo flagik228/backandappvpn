@@ -4,7 +4,7 @@ from models import (async_session, User, UserWallet, WalletTransaction, VPNKey,V
 from typing import List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from sqlalchemy import select, func
+from sqlalchemy import select, func, exists
 from sqlalchemy.orm import aliased
 from urllib.parse import quote
 from xui_api import XUIApi
@@ -472,6 +472,27 @@ async def get_server_tariffs(server_id: int):
             "days": t.days,
             "price_usdt": str(t.price_tarif)
         } for t in tariffs]
+
+
+#статус подписки в профиле
+async def has_active_subscription(tg_id: int) -> bool:
+    async with async_session() as session:
+        user = await session.scalar(
+            select(User).where(User.tg_id == tg_id)
+        )
+        if not user:
+            return False
+
+        q = select(
+            exists().where(
+                VPNSubscription.idUser == user.idUser,
+                VPNKey.id == VPNSubscription.vpn_key_id,
+                VPNKey.is_active == True,
+                VPNKey.expires_at > datetime.now(timezone.utc)
+            )
+        )
+
+        return bool(await session.scalar(q))
 
 
 # =======================
