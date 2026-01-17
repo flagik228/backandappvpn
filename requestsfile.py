@@ -1,5 +1,5 @@
 from sqlalchemy import select, update, delete
-from models import (async_session, User, UserWallet, WalletTransaction, VPNKey,VPNSubscription, TypesVPN,
+from models import (async_session, User, UserWallet, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning)
 from typing import List
 from datetime import datetime, timezone, timedelta
@@ -112,45 +112,15 @@ async def get_servers_full():
         return result
 
 
-
-async def sync_vpn_key_status(vpn_key: VPNKey, xui: XUIApi, inbound_id: int):
-    """
-    Синхронизация статуса VPN ключа с 3x-ui
-    """
-    inbound = await xui.get_inbound(inbound_id)
-    if not inbound:
-        vpn_key.is_active = False
-        return
-
-    now_ts = int(datetime.utcnow().timestamp() * 1000)
-
-    for client in inbound.settings.clients or []:
-        if client.email == vpn_key.provider_client_email:
-            expiry = client.expiry_time
-
-            if expiry is not None and expiry < now_ts:
-                vpn_key.is_active = False
-            else:
-                vpn_key.is_active = True
-            return
-
-    # если клиента нет в inbound — считаем истёкшим
-    vpn_key.is_active = False
-
-
 async def recalc_server_load(session, server_id: int):
     server = await session.get(ServersVPN, server_id)
 
-    active_count = await session.scalar(
-        select(func.count())
-        .select_from(VPNKey)
-        .where(
-            VPNKey.idServerVPN == server_id,
-            VPNKey.is_active == True,
-            VPNKey.expires_at > datetime.now(timezone.utc)
+    active_count = await session.scalar(select(func.count()).select_from(VPNSubscription).where(
+            VPNSubscription.idServerVPN == server_id,
+            VPNSubscription.is_active == True,
+            VPNSubscription.expires_at > datetime.now(timezone.utc)
         )
     )
-
     server.now_conn = active_count
     server.is_active = active_count < server.max_conn
 
@@ -227,16 +197,10 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
             raise Exception("User or server not found")
 
         # 🔑 сначала создаём XUI API
-        xui = XUIApi(
-            server.api_url,
-            server.xui_username,
-            server.xui_password
-        )
+        xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
 
         # 👉 потом генерируем email
-        client_email = await generate_unique_client_email(
-            session, user_id, server, xui
-        )
+        client_email = await generate_unique_client_email(session, user_id, server, xui)
 
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
@@ -268,9 +232,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
             "sid": short_id,
         }
 
-        query_str = "&".join(
-            f"{k}={quote(str(v))}" for k, v in query.items()
-        )
+        query_str = "&".join(f"{k}={quote(str(v))}" for k, v in query.items())
 
         access_link = (
             f"vless://{uuid}@{server.server_ip}:{server.inbound_port}"
@@ -280,28 +242,16 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         now = datetime.utcnow()
         expires_at = now + timedelta(days=tariff_days)
 
-        vpn_key = VPNKey(
+        subscription = VPNSubscription(
             idUser=user_id,
             idServerVPN=server_id,
             provider="xui",
-
-            provider_client_email=client_email,   # 🔑 ВАЖНО
-            provider_client_uuid=uuid,             # можно хранить, но не использовать
-
+            provider_client_email=client_email,
+            provider_client_uuid=uuid,
             access_data=access_link,
             created_at=now,
             expires_at=expires_at,
-            is_active=True
-        )
-
-        session.add(vpn_key)
-        await session.flush()  # получаем vpn_key.id
-
-        subscription = VPNSubscription(
-            idUser=user_id,
-            vpn_key_id=vpn_key.id,
-            started_at=now,
-            expires_at=expires_at,
+            is_active=True,
             status="active"
         )
 
@@ -310,10 +260,10 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         await session.commit()
 
         return {
-            "vpn_key_id": vpn_key.id,
+            "subscription_id": subscription.id,
             "access_data": access_link,
-            "expires_at": expires_at.isoformat(),          # для API / логики
-            "expires_at_human": format_datetime_ru(expires_at)  # для человека
+            "expires_at": expires_at.isoformat(), # для API / логики
+            "expires_at_human": format_datetime_ru(expires_at) # для человека
         }
         
         
@@ -324,15 +274,16 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
         if not tariff:
             raise ValueError("Tariff not found")
 
-        vpn_key = await session.scalar(select(VPNKey).where(VPNKey.idUser == user_id)
-            .where(VPNKey.idServerVPN == server_id)
+        sub = await session.scalar(select(VPNSubscription).where(
+                VPNSubscription.idUser == user_id,
+                VPNSubscription.idServerVPN == server_id
+            )
         )
 
-        if not vpn_key:
-            raise ValueError("VPN key not found")
+        if not sub:
+            raise ValueError("Subscription not found")
 
         server = await session.get(ServersVPN, server_id)
-
         xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
 
         inbound = await xui.get_inbound_by_port(server.inbound_port)
@@ -342,60 +293,41 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
         # 🔥 ПРОДЛЯЕМ В XUI
         await xui.extend_client(
             inbound_id=inbound.id,
-            client_email=vpn_key.provider_client_email,
+            client_email=sub.provider_client_email,
             days=tariff.days)
 
         now = datetime.now(timezone.utc)
 
-        if vpn_key.expires_at:
-            expires_at = vpn_key.expires_at
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if sub.expires_at and sub.expires_at > now:
+            sub.expires_at += timedelta(days=tariff.days)
         else:
-            expires_at = None
+            sub.expires_at = now + timedelta(days=tariff.days)
 
-        if expires_at and expires_at > now:
-            vpn_key.expires_at = expires_at + timedelta(days=tariff.days)
-        else:
-            vpn_key.expires_at = now + timedelta(days=tariff.days)
-
-        vpn_key.is_active = True
+        sub.is_active = True
+        sub.status = "active"
         await recalc_server_load(session, server_id)
-        
-        subscription = await session.scalar(select(VPNSubscription).where(VPNSubscription.vpn_key_id == vpn_key.id))
-
-        if subscription:
-            subscription.expires_at = vpn_key.expires_at
-            subscription.status = "active"
-
         await session.commit()
 
         return {
-            "vpn_key_id": vpn_key.id,
-            "access_data": vpn_key.access_data,
+            "subscription_id": sub.id,
+            "access_data": sub.access_data,
             "days_added": tariff.days,
-            "expires_at": vpn_key.expires_at.isoformat(),
-            "expires_at_human": format_datetime_ru(vpn_key.expires_at)
+            "expires_at": sub.expires_at.isoformat(),
+            "expires_at_human": format_datetime_ru(sub.expires_at)
         }
 
 
 # =======================
 # --- УДАЛЕНИЕ КЛЮЧА
-async def remove_vpn_xui(vpn_key: VPNKey):
+async def remove_vpn_xui(subscription: VPNSubscription):
     async with async_session() as session:
-        server = await session.get(ServersVPN, vpn_key.idServerVPN)
+        server = await session.get(ServersVPN, subscription.idServerVPN)
         if not server:
             raise Exception("Сервер не найден")
 
-        xui = XUIApi(
-            server.api_url,
-            server.xui_username,
-            server.xui_password
-        )
-
+        xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
-            # await xui.close()
             raise Exception("Inbound не найден")
 
         inbound_id = inbound.id
@@ -403,16 +335,15 @@ async def remove_vpn_xui(vpn_key: VPNKey):
         try:
             await xui.remove_client(
             inbound_id=inbound_id,
-            email=vpn_key.provider_client_email
+            email=subscription.provider_client_email
         )
         except Exception as e:
-            # await xui.close()
             raise Exception(f"Не удалось удалить клиента на XUI: {e}")
 
-        # await xui.close()
 
         # Деактивируем ключ в БД
-        vpn_key.is_active = False
+        subscription.is_active = False
+        subscription.status = "expired"
         await session.commit()
 
 
@@ -420,33 +351,27 @@ async def remove_vpn_xui(vpn_key: VPNKey):
 # --- USER: MY VPNs ---
 async def get_my_vpns(tg_id: int) -> List[dict]:
     async with async_session() as session:
-        user = await session.scalar(
-            select(User).where(User.tg_id == tg_id)
-        )
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
         if not user:
             return []
 
         now = datetime.now(timezone.utc)
 
-        rows = await session.execute(
-            select(VPNSubscription, VPNKey, ServersVPN)
-            .join(VPNKey, VPNSubscription.vpn_key_id == VPNKey.id)
-            .join(ServersVPN, VPNKey.idServerVPN == ServersVPN.idServerVPN)
+        rows = await session.execute(select(VPNSubscription, ServersVPN)
+            .join(ServersVPN, VPNSubscription.idServerVPN == ServersVPN.idServerVPN)
             .where(VPNSubscription.idUser == user.idUser)
             .order_by(VPNSubscription.expires_at.desc())
         )
 
         result = []
-
-        for sub, key, server in rows:
-            is_active = key.expires_at and key.expires_at > now
-
+        for sub, server in rows:
+            is_active = sub.expires_at > now
             result.append({
-                "vpn_key_id": key.id,
+                "subscription_id": sub.id,
                 "server_id": server.idServerVPN,
                 "serverName": server.nameVPN,
-                "access_data": key.access_data,
-                "expires_at": key.expires_at.isoformat(),
+                "access_data": sub.access_data,
+                "expires_at": sub.expires_at.isoformat(),
                 "is_active": is_active,
                 "status": "active" if is_active else "expired"
             })
@@ -472,18 +397,15 @@ async def get_server_tariffs(server_id: int):
 #статус подписки в профиле
 async def has_active_subscription(tg_id: int) -> bool:
     async with async_session() as session:
-        user = await session.scalar(
-            select(User).where(User.tg_id == tg_id)
-        )
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
         if not user:
             return False
 
         q = select(
             exists().where(
                 VPNSubscription.idUser == user.idUser,
-                VPNKey.id == VPNSubscription.vpn_key_id,
-                VPNKey.is_active == True,
-                VPNKey.expires_at > datetime.now(timezone.utc)
+                VPNSubscription.is_active == True,
+                VPNSubscription.expires_at > datetime.now(timezone.utc)
             )
         )
 

@@ -167,30 +167,23 @@ class Payment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
-    # VPN KEYS
-class VPNKey(Base):
-    __tablename__ = "vpn_keys"
+class VPNSubscription(Base):
+    __tablename__ = "vpn_subscriptions"
+
     id: Mapped[int] = mapped_column(primary_key=True)
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser"))
     idServerVPN: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN"))
-    provider: Mapped[str] = mapped_column(String(200))
+
+    provider: Mapped[str] = mapped_column(String(100))
     provider_client_email: Mapped[str] = mapped_column(String(200), index=True)
     provider_client_uuid: Mapped[str] = mapped_column(String(200))
     access_data: Mapped[str] = mapped_column(String(500))
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
-
-    # VPN SUBSCRIPTIONS
-class VPNSubscription(Base):
-    __tablename__ = "vpn_subscriptions"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser"))
-    vpn_key_id: Mapped[int] = mapped_column(ForeignKey("vpn_keys.id"))
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    status: Mapped[str] = mapped_column(String(30), default="active")
+    status: Mapped[str] = mapped_column(String(30), default="active")  # active / expired
 
 
     # конфиг для рефералки

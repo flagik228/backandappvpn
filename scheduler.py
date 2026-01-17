@@ -1,18 +1,17 @@
-import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from models import async_session, VPNKey, VPNSubscription, ServersVPN
+from models import async_session, VPNSubscription, ServersVPN
 from xui_api import XUIApi
 from requestsfile import recalc_server_load
 
 
 async def expire_vpn_subscriptions():
     """
-    Каждые 30 минут:
-    - деактивирует истёкшие VPN
+    Каждые N минут:
+    - деактивирует истёкшие VPNSubscription
     - удаляет клиента из 3x-ui
     - обновляет нагрузку сервера
     """
@@ -21,35 +20,25 @@ async def expire_vpn_subscriptions():
     now = datetime.now(timezone.utc)
 
     async with async_session() as session:
-        result = await session.scalars(
-            select(VPNKey).where(
-                VPNKey.is_active == True,
-                VPNKey.expires_at < now
+        subs = (await session.scalars(
+            select(VPNSubscription)
+            .where(
+                VPNSubscription.is_active == True,
+                VPNSubscription.expires_at < now
             )
-        )
+        )).all()
 
-        expired_keys = result.all()
-
-        if not expired_keys:
+        if not subs:
             print("✅ No expired VPNs")
             return
 
-        for key in expired_keys:
-            print(f"⛔ Expiring VPN key {key.id}")
+        for sub in subs:
+            print(f"⛔ Expiring subscription {sub.id}")
 
-            # 1️⃣ деактивируем ключ
-            key.is_active = False
+            sub.is_active = False
+            sub.status = "expired"
 
-            # 2️⃣ обновляем подписку
-            sub = await session.scalar(
-                select(VPNSubscription)
-                .where(VPNSubscription.vpn_key_id == key.id)
-            )
-            if sub:
-                sub.status = "expired"
-
-            # 3️⃣ удаляем клиента из XUI
-            server = await session.get(ServersVPN, key.idServerVPN)
+            server = await session.get(ServersVPN, sub.idServerVPN)
             if server:
                 try:
                     xui = XUIApi(
@@ -61,17 +50,16 @@ async def expire_vpn_subscriptions():
                     if inbound:
                         await xui.remove_client(
                             inbound_id=inbound.id,
-                            email=key.provider_client_email
+                            email=sub.provider_client_email
                         )
-                        print(f"🗑 Removed client {key.provider_client_email} from XUI")
+                        print(f"🗑 Removed client {sub.provider_client_email}")
                 except Exception as e:
                     print(f"⚠️ XUI remove error: {e}")
 
-            # 4️⃣ пересчёт нагрузки сервера
-            await recalc_server_load(session, key.idServerVPN)
+            await recalc_server_load(session, sub.idServerVPN)
 
         await session.commit()
-        print(f"✅ Expired {len(expired_keys)} VPNs")
+        print(f"✅ Expired {len(subs)} VPNs")
 
 
 def start_scheduler():

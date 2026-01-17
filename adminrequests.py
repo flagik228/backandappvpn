@@ -1,5 +1,5 @@
 from sqlalchemy import select, update, delete
-from models import (async_session, User, UserWallet, WalletTransaction, VPNKey,VPNSubscription, TypesVPN,
+from models import (async_session, User, UserWallet, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning)
 from typing import List
 from datetime import datetime, timedelta
@@ -567,7 +567,7 @@ async def admin_delete_payment(payment_id: int):
 
 # =========================================================
 # --- ADMIN: VPNKey
-# =========================================================
+"""
 async def admin_get_vpn_keys():
     async with async_session() as session:
         keys = (await session.scalars(select(VPNKey))).all()
@@ -613,7 +613,7 @@ async def admin_delete_vpn_key(key_id: int):
         await session.delete(key)
         await session.commit()
         return {"status": "ok"}
-
+"""
 
 
 # =========================================================
@@ -625,19 +625,27 @@ async def admin_get_vpn_subscriptions():
         return [{
             "id": s.id,
             "idUser": s.idUser,
-            "vpn_key_id": s.vpn_key_id,
-            "started_at": s.started_at.isoformat(),
+            "idServerVPN": s.idServerVPN,
+            "provider": s.provider,
+            "provider_client_email": s.provider_client_email,
+            "created_at": s.created_at.isoformat(),
             "expires_at": s.expires_at.isoformat(),
+            "is_active": s.is_active,
             "status": s.status
         } for s in subs]
 
+
 async def admin_add_vpn_subscription(data: dict):
     async with async_session() as session:
-        sub = VPNSubscription(**data)
+        sub = VPNSubscription(
+            **data,
+            created_at=data.get("created_at") or datetime.utcnow()
+        )
         session.add(sub)
         await session.commit()
         await session.refresh(sub)
         return {"id": sub.id}
+
 
 async def admin_update_vpn_subscription(sub_id: int, data: dict):
     async with async_session() as session:
@@ -650,6 +658,7 @@ async def admin_update_vpn_subscription(sub_id: int, data: dict):
 
         await session.commit()
         return {"status": "ok"}
+
 
 async def admin_delete_vpn_subscription(sub_id: int):
     async with async_session() as session:

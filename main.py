@@ -12,7 +12,7 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 from aiogram.filters import CommandStart
 
-from models import init_db, async_session, UserStart, User, UserTask, UserReward, ExchangeRate, Tariff, ServersVPN, Order, VPNKey, UserWallet, Payment
+from models import init_db, async_session, UserStart, User, UserTask, UserReward, ExchangeRate, Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
 import requestsfile as rq
 import adminrequests as rqadm
 from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward, get_user_wallet
@@ -201,7 +201,7 @@ async def create_invoice(data: CreateInvoiceRequest):
 # -------- ПРОДЛЕНИЕ
 class RenewInvoiceRequest(BaseModel):
     tg_id: int
-    vpn_key_id: int
+    subscription_id: int
     tariff_id: int
 
 @app.post("/api/vpn/renew-invoice")
@@ -211,15 +211,15 @@ async def renew_invoice(data: RenewInvoiceRequest):
         if not user:
             raise HTTPException(404, "User not found")
 
-        vpn_key = await session.get(VPNKey, data.vpn_key_id)
-        if not vpn_key:
+        sub = await session.get(VPNSubscription, data.subscription_id)
+        if not sub:
             raise HTTPException(404, "VPN key not found")
 
         tariff = await session.get(Tariff, data.tariff_id)
         if not tariff or not tariff.is_active:
-            raise HTTPException(404, "Tariff not found")
+            raise HTTPException(404, "Subscription not found")
 
-        server = await session.get(ServersVPN, vpn_key.idServerVPN)
+        server = await session.get(ServersVPN, sub.idServerVPN)
 
         rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         if not rate:
@@ -230,7 +230,6 @@ async def renew_invoice(data: RenewInvoiceRequest):
         if stars_price < 1:
             stars_price = 1
 
-        # ✅ БЕЗ type
         order = Order(
             idUser=user.idUser,
             server_id=server.idServerVPN,
@@ -251,11 +250,7 @@ async def renew_invoice(data: RenewInvoiceRequest):
                 description=server.nameVPN,
                 payload=f"renew:{order.id}",
                 currency="XTR",
-                prices=[
-                    LabeledPrice(
-                        label=f"{tariff.days} дней VPN",
-                        amount=stars_price
-                    )
+                prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)
                 ]
             )
         )
@@ -595,14 +590,13 @@ async def reward_preview(tg_id: int, reward_id: int, server_id: int):
         if not reward or reward.idUser != user.idUser:
             raise HTTPException(404, "Reward not found")
 
-        vpn_key = await session.scalar(select(VPNKey).where(
-                VPNKey.idUser == user.idUser,
-                VPNKey.idServerVPN == server_id
-            )
+        sub = await session.scalar(select(VPNSubscription).where(
+                VPNSubscription.idUser == user.idUser,
+                VPNSubscription.idServerVPN == server_id)
         )
 
         return {
-            "mode": "extend" if vpn_key else "create",
+            "mode": "extend" if sub else "create",
             "days": reward.days
         }
 
@@ -943,7 +937,7 @@ async def admin_delete_payment(payment_id: int):
 
 # ======================
 # ADMIN: VPN KEYS
-# ======================
+"""
 class VPNKeyCreate(BaseModel):
     idUser: int
     idServerVPN: int
@@ -974,24 +968,27 @@ async def admin_update_vpn_key(key_id: int, data: VPNKeyUpdate):
 @app.delete("/api/admin/vpn-keys/{key_id}")
 async def admin_delete_vpn_key(key_id: int):
     return await rqadm.admin_delete_vpn_key(key_id)
-
+"""
 
 # ======================
 # ADMIN: VPN SUBSCRIPTIONS
 # ======================
 class VPNSubscriptionCreate(BaseModel):
     idUser: int
-    vpn_key_id: int
-    started_at: datetime
+    idServerVPN: int
+    provider: str
+    provider_client_email: str
+    provider_client_uuid: str
+    access_data: str
     expires_at: datetime
-    status: str
+    is_active: bool = True
+    status: str = "active"
 
 class VPNSubscriptionUpdate(BaseModel):
-    idUser: int
-    vpn_key_id: int
     started_at: datetime
-    expires_at: datetime
-    status: str
+    expires_at: datetime | None = None
+    is_active: bool | None = None
+    status: str | None = None
 
 
 @app.get("/api/admin/vpn-subscriptions")
