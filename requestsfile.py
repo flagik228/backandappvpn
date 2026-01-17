@@ -160,7 +160,7 @@ def format_datetime_ru(dt: datetime) -> str:
 async def generate_unique_client_email(session,user_id: int,server: ServersVPN,xui: XUIApi) -> str:
 
     country = await session.get(CountriesVPN, server.idCountry)
-    country_code = country.nameCountry.upper()[:2]
+    country_code = country.nameCountry.upper()[:3]
 
     inbound = await xui.get_inbound_by_port(server.inbound_port)
     if not inbound:
