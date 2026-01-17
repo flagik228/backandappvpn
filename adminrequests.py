@@ -564,58 +564,6 @@ async def admin_delete_payment(payment_id: int):
         return {"status": "ok"}
 
 
-
-# =========================================================
-# --- ADMIN: VPNKey
-"""
-async def admin_get_vpn_keys():
-    async with async_session() as session:
-        keys = (await session.scalars(select(VPNKey))).all()
-        return [{
-            "id": k.id,
-            "idUser": k.idUser,
-            "idServerVPN": k.idServerVPN,
-            "provider": k.provider,
-            "provider_client_email": k.provider_client_email,
-            "provider_client_uuid": k.provider_client_uuid,
-            "access_data": k.access_data,
-            "created_at": k.created_at.isoformat(),
-            "expires_at": k.expires_at.isoformat() if k.expires_at else None,
-            "is_active": k.is_active
-        } for k in keys]
-
-async def admin_add_vpn_key(data: dict):
-    async with async_session() as session:
-        key = VPNKey(**data)
-        session.add(key)
-        await session.commit()
-        await session.refresh(key)
-        return {"id": key.id}
-
-async def admin_update_vpn_key(key_id: int, data: dict):
-    async with async_session() as session:
-        key = await session.get(VPNKey, key_id)
-        if not key:
-            raise ValueError("VPNKey not found")
-
-        for k, v in data.items():
-            setattr(key, k, v)
-
-        await session.commit()
-        return {"status": "ok"}
-
-async def admin_delete_vpn_key(key_id: int):
-    async with async_session() as session:
-        key = await session.get(VPNKey, key_id)
-        if not key:
-            raise ValueError("VPNKey not found")
-
-        await session.delete(key)
-        await session.commit()
-        return {"status": "ok"}
-"""
-
-
 # =========================================================
 # --- ADMIN: VPNSubscription
 # =========================================================

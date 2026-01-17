@@ -934,42 +934,6 @@ async def admin_delete_payment(payment_id: int):
     return await rqadm.admin_delete_payment(payment_id)
 
 
-
-# ======================
-# ADMIN: VPN KEYS
-"""
-class VPNKeyCreate(BaseModel):
-    idUser: int
-    idServerVPN: int
-    provider: str
-    provider_client_email: str
-    provider_client_uuid: str | None = None
-    access_data: str
-    expires_at: datetime
-    is_active: bool = True
-
-class VPNKeyUpdate(BaseModel):
-    expires_at: datetime
-    is_active: bool
-
-
-@app.get("/api/admin/vpn-keys")
-async def admin_get_vpn_keys():
-    return await rqadm.admin_get_vpn_keys()
-
-@app.post("/api/admin/vpn-keys")
-async def admin_add_vpn_key(data: VPNKeyCreate):
-    return await rqadm.admin_add_vpn_key(data.dict())
-
-@app.put("/api/admin/vpn-keys/{key_id}")
-async def admin_update_vpn_key(key_id: int, data: VPNKeyUpdate):
-    return await rqadm.admin_update_vpn_key(key_id, data.dict())
-
-@app.delete("/api/admin/vpn-keys/{key_id}")
-async def admin_delete_vpn_key(key_id: int):
-    return await rqadm.admin_delete_vpn_key(key_id)
-"""
-
 # ======================
 # ADMIN: VPN SUBSCRIPTIONS
 # ======================

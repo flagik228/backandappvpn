@@ -3,7 +3,7 @@ from sqlalchemy.exc import NoResultFound
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
-from models import async_session, User, Order, UserTask, UserReward, VPNKey, VPNSubscription, ServersVPN
+from models import async_session, User, Order, UserTask, UserReward, VPNSubscription, ServersVPN
 from requestsfile import pay_and_extend_vpn, create_vpn_xui
 from xui_api import XUIApi
 
@@ -98,9 +98,9 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
         if not server:
             raise HTTPException(404, "Server not found")
 
-        vpn_key = await session.scalar(select(VPNKey).where(
-                VPNKey.idUser == user_id,
-                VPNKey.idServerVPN == server_id
+        vpn_key = await session.scalar(select(VPNSubscription).where(
+                VPNSubscription.idUser == user_id,
+                VPNSubscription.idServerVPN == server_id
             )
         )
 
