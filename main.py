@@ -12,7 +12,7 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 from aiogram.filters import CommandStart
 
-from models import init_db, async_session, UserStart, User, UserTask, UserReward, ExchangeRate, Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
+from models import init_db, async_session, UserStart, User, WalletTransaction, UserTask, UserReward, ExchangeRate, Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
 import requestsfile as rq
 import adminrequests as rqadm
 from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward, get_user_wallet
@@ -259,6 +259,62 @@ async def renew_invoice(data: RenewInvoiceRequest):
 
 
 
+# ПОПОЛНЕНИЕ БАЛАНСА (Stars)
+class WalletDepositRequest(BaseModel):
+    tg_id: int
+    amount_usdt: Decimal
+
+
+@app.post("/api/wallet/deposit/stars")
+async def wallet_deposit_stars(data: WalletDepositRequest):
+    if data.amount_usdt < Decimal("0.1"):
+        raise HTTPException(400, "Minimum deposit is $0.1")
+
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        rate = await session.scalar(
+            select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT")
+        )
+        if not rate:
+            raise HTTPException(500, "Exchange rate not set")
+
+        stars_amount = int(data.amount_usdt / rate.rate)
+        if stars_amount < 1:
+            stars_amount = 1
+
+        order = Order(
+            idUser=user.idUser,
+            server_id=0,
+            idTarif=0,
+            purpose_order="deposit",
+            amount=data.amount_usdt,
+            currency="USDT",
+            status="pending"
+        )
+        session.add(order)
+        await session.flush()
+        await session.commit()
+
+        invoice_link = await bot(
+            CreateInvoiceLink(
+                title="Пополнение баланса",
+                description=f"Баланс +${data.amount_usdt}",
+                payload=f"deposit:{order.id}",
+                currency="XTR",
+                prices=[LabeledPrice(label="Balance top up", amount=stars_amount)]
+            )
+        )
+
+        return {
+            "invoice_link": invoice_link,
+            "order_id": order.id
+        }
+
+
+
 # --- Создание заказа Stars --- 
 class OrderRequest(BaseModel):
     tg_id: int
@@ -335,6 +391,17 @@ async def successful_payment(message: Message):
                     order.server_id,
                     order.idTarif
                 )
+            elif prefix == "deposit":
+                wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == order.idUser))
+                wallet.balance_usdt += Decimal(order.amount)
+
+                tx = WalletTransaction(
+                    wallet_id=wallet.id,
+                    amount=order.amount,
+                    type="deposit",
+                    description=f"Пополнение баланса +${order.amount}"
+                )
+                session.add(tx)
             else:
                 raise Exception("Unknown order purpose")
 
@@ -451,7 +518,22 @@ async def crypto_webhook(data: dict):
 
         # СОЗДАЁМ VPN
         try:
-            vpn_data = await create_vpn_xui(order.idUser,order.server_id,tariff.days)
+            if order.purpose_order == "buy":
+                vpn_data = await create_vpn_xui(order.idUser,order.server_id,tariff.days)
+            elif order.purpose_order == "deposit":
+                wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == order.idUser))
+
+                wallet.balance_usdt += Decimal(order.amount)
+
+                session.add(WalletTransaction(
+                    wallet_id=wallet.id,
+                    amount=order.amount,
+                    type="deposit",
+                    description=f"Пополнение через CryptoBot +${order.amount}"
+                ))
+            else:
+                raise Exception("Unknown order purpose")
+
         except Exception:
             order.status = "failed"
             await session.commit()

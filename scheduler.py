@@ -56,7 +56,7 @@ def start_scheduler():
     scheduler.add_job(
         update_vpn_subscription_statuses,
         trigger="interval",
-        minutes=1,              # можно увеличить до 5–10 мин без проблем
+        minutes=5,              # можно увеличить до 5–10 мин без проблем
         id="vpn_status_updater",
         max_instances=1,
         replace_existing=True,
