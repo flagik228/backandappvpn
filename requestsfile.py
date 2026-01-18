@@ -438,8 +438,7 @@ async def get_referrals_list(tg_id: int):
 
         ReferralUser = aliased(User)
 
-        rows = await session.execute(
-            select(
+        rows = await session.execute(select(
                 ReferralUser.idUser,
                 ReferralUser.tg_username,
                 func.coalesce(func.sum(ReferralEarning.amount_usdt), 0)
