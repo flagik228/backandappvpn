@@ -570,28 +570,44 @@ async def admin_delete_payment(payment_id: int):
 async def admin_get_vpn_subscriptions():
     async with async_session() as session:
         subs = (await session.scalars(select(VPNSubscription))).all()
+
         return [{
             "id": s.id,
             "idUser": s.idUser,
             "idServerVPN": s.idServerVPN,
+
             "provider": s.provider,
             "provider_client_email": s.provider_client_email,
+            "provider_client_uuid": s.provider_client_uuid,
+            "access_data": s.access_data,
+
             "created_at": s.created_at.isoformat(),
             "expires_at": s.expires_at.isoformat(),
+
             "is_active": s.is_active,
-            "status": s.status
+            "status": s.status,
         } for s in subs]
 
 
 async def admin_add_vpn_subscription(data: dict):
     async with async_session() as session:
         sub = VPNSubscription(
-            **data,
-            created_at=data.get("created_at") or datetime.utcnow()
+            idUser=data["idUser"],
+            idServerVPN=data["idServerVPN"],
+            provider=data["provider"],
+            provider_client_email=data["provider_client_email"],
+            provider_client_uuid=data["provider_client_uuid"],
+            access_data=data["access_data"],
+            expires_at=data["expires_at"],
+            is_active=data.get("is_active", True),
+            status=data.get("status", "active"),
+            created_at=datetime.utcnow()
         )
+
         session.add(sub)
         await session.commit()
         await session.refresh(sub)
+
         return {"id": sub.id}
 
 
@@ -601,8 +617,19 @@ async def admin_update_vpn_subscription(sub_id: int, data: dict):
         if not sub:
             raise ValueError("Subscription not found")
 
-        for k, v in data.items():
-            setattr(sub, k, v)
+        # обновляем ТОЛЬКО разрешённые поля
+        allowed_fields = {
+            "expires_at",
+            "is_active",
+            "status",
+            "provider_client_email",
+            "provider_client_uuid",
+            "access_data",
+        }
+
+        for key, value in data.items():
+            if key in allowed_fields and value is not None:
+                setattr(sub, key, value)
 
         await session.commit()
         return {"status": "ok"}

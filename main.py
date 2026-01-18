@@ -948,11 +948,14 @@ class VPNSubscriptionCreate(BaseModel):
     is_active: bool = True
     status: str = "active"
 
+
 class VPNSubscriptionUpdate(BaseModel):
-    started_at: datetime
     expires_at: datetime | None = None
     is_active: bool | None = None
     status: str | None = None
+    provider_client_email: str | None = None
+    provider_client_uuid: str | None = None
+    access_data: str | None = None
 
 
 @app.get("/api/admin/vpn-subscriptions")
