@@ -17,11 +17,7 @@ async def add_user(tg_id: int, user_role: str = "user", referrer_id: int | None 
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
         if user:
             return user
-        user = User(
-            tg_id=tg_id,
-            userRole=user_role,
-            referrer_id=referrer_id
-        )
+        user = User(tg_id=tg_id,userRole=user_role,referrer_id=referrer_id)
         session.add(user)
         await session.flush()
 
@@ -39,9 +35,7 @@ async def get_user_wallet(tg_id: int):
             return None
 
         wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.idUser))
-        return {
-            "balance_usdt": str(wallet.balance_usdt)
-        }
+        return {"balance_usdt": str(wallet.balance_usdt)}
         
     
 # =======================
@@ -384,13 +378,8 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
 # --- GET TARIFFS ---
 async def get_server_tariffs(server_id: int):
     async with async_session() as session:
-        tariffs = await session.scalars(
-            select(Tariff).where(Tariff.server_id == server_id, Tariff.is_active == True)
-        )
-        return [{
-            "idTarif": t.idTarif,
-            "days": t.days,
-            "price_usdt": str(t.price_tarif)
+        tariffs = await session.scalars(select(Tariff).where(Tariff.server_id == server_id, Tariff.is_active == True))
+        return [{"idTarif": t.idTarif,"days": t.days,"price_usdt": str(t.price_tarif)
         } for t in tariffs]
 
 
@@ -401,8 +390,7 @@ async def has_active_subscription(tg_id: int) -> bool:
         if not user:
             return False
 
-        q = select(
-            exists().where(
+        q = select(exists().where(
                 VPNSubscription.idUser == user.idUser,
                 VPNSubscription.is_active == True,
                 VPNSubscription.expires_at > datetime.now(timezone.utc)
@@ -416,17 +404,11 @@ async def has_active_subscription(tg_id: int) -> bool:
 # --- REFERRALS ---
 async def get_referrals_count(tg_id: int) -> int:
     async with async_session() as session:
-        user = await session.scalar(
-            select(User).where(User.tg_id == tg_id)
-        )
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
         if not user:
             return 0
 
-        count = await session.scalar(
-            select(func.count())
-            .select_from(User)
-            .where(User.referrer_id == user.idUser)
-        )
+        count = await session.scalar(select(func.count()).select_from(User).where(User.referrer_id == user.idUser))
         return count or 0
 
 
@@ -454,11 +436,7 @@ async def get_referrals_list(tg_id: int):
             .order_by(ReferralUser.created_at.desc())
         )
 
-        return [{
-                "idUser": r.idUser,
-                "username": r.tg_username,
-                "total_earned": str(r[2])
-            }
+        return [{"idUser": r.idUser,"username": r.tg_username,"total_earned": str(r[2])}
             for r in rows
         ]
 
@@ -487,18 +465,10 @@ async def process_referral_reward(session, order: Order):
 
     wallet.balance_usdt += reward_usdt
 
-    earning = ReferralEarning(
-        referrer_id=user.referrer_id,
-        order_id=order.id,
-        percent=percent,
-        amount_usdt=reward_usdt
-    )
+    earning = ReferralEarning(referrer_id=user.referrer_id,order_id=order.id,percent=percent,amount_usdt=reward_usdt)
     session.add(earning)
 
-    tx = WalletTransaction(
-        wallet_id=wallet.id,
-        amount=reward_usdt,
-        type="referral",
+    tx = WalletTransaction(wallet_id=wallet.id,amount=reward_usdt,type="referral",
         description=f"Реферальное начисление {percent}% (+${reward_usdt})"
     )
     session.add(tx)

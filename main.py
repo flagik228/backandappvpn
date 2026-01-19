@@ -565,6 +565,29 @@ async def get_order_status(order_id: int):
             "status": order.status
         }
 
+# Проверка успешной оплаты пополнения
+@app.get("/api/wallet/status/{operation_id}")
+async def get_wallet_operation_status(operation_id: int):
+    async with async_session() as session:
+        op = await session.get(WalletOperation, operation_id)
+        if not op:
+            raise HTTPException(404, "Wallet operation not found")
+
+        return {
+            "status": op.status
+        }
+
+
+
+@app.get("/api/rate/xtr")
+async def get_xtr_rate():
+    async with async_session() as session:
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        if not rate:
+            raise HTTPException(404, "Rate not set")
+
+        return {"rate": str(rate.rate)}
+
 
 
 
@@ -587,14 +610,7 @@ async def get_tariffs(server_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/rate/xtr")
-async def get_xtr_rate():
-    async with async_session() as session:
-        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
-        if not rate:
-            raise HTTPException(404, "Rate not set")
 
-        return {"rate": str(rate.rate)}
 
     
 
