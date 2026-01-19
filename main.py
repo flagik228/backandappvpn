@@ -501,11 +501,10 @@ async def renew_crypto_invoice(data: RenewCryptoInvoiceRequest):
         tariff = await session.get(Tariff, data.tariff_id)
         if not tariff or not tariff.is_active:
             raise HTTPException(404, "Tariff not found")
-        server = await session.get(ServersVPN, sub.idServerVPN)
 
         order = Order(
             idUser=user.idUser,
-            server_id=server.idServerVPN,
+            server_id=sub.idServerVPN,
             idTarif=tariff.idTarif,
             purpose_order="extension",
             amount=Decimal(tariff.price_tarif),
