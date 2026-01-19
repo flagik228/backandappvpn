@@ -51,7 +51,6 @@ async def telegram_webhook(request: Request):
     return {"ok": True}
 
 
-
 # Запуск бота (фиксация реф)===
 @dp.message(CommandStart())
 async def start_cmd(message: Message):
@@ -71,7 +70,6 @@ async def start_cmd(message: Message):
             await session.commit()
 
     await message.answer("👋 Добро пожаловать!\n\nОткройте mini app, чтобы продолжить.")
-
 
 
 # ======================
@@ -138,6 +136,15 @@ async def vpn_status(tg_id: int):
 
 
 # === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =============================================
+
+@app.get("/api/payment/status/{payment_id}")
+async def get_payment_status(payment_id: int):
+    async with async_session() as session:
+        payment = await session.get(Payment, payment_id)
+        if not payment:
+            raise HTTPException(404, "Payment not found")
+
+        return {"status": payment.status}
 
 # ======================
 # API
@@ -211,9 +218,6 @@ async def wallet_deposit_stars(data: WalletDepositStarsRequest):
         if not user:
             raise HTTPException(404, "User not found")
 
-        if data.amount_usdt < Decimal("0.1"):
-            raise HTTPException(400, "Minimum deposit is $0.1")
-
         rate = await session.scalar(
             select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT")
         )
@@ -224,40 +228,33 @@ async def wallet_deposit_stars(data: WalletDepositStarsRequest):
         if stars_amount < 1:
             stars_amount = 1
 
-        order = Order(
-            idUser=user.idUser,
-            purpose_order="deposit",
-            amount=data.amount_usdt,
-            currency="USDT",
-            status="pending"
+        # ✅ создаём Payment, а НЕ Order
+        payment = Payment(
+            order_id=None,
+            provider="telegram_stars",
+            provider_payment_id=None,
+            status="pending",
+            meta={"tg_id": user.tg_id, "amount_usdt": str(data.amount_usdt)}
         )
-        session.add(order)
+        session.add(payment)
         await session.flush()
-        await session.commit()
 
         invoice_link = await bot(
             CreateInvoiceLink(
                 title="Пополнение баланса",
-                description=f"Пополнение на ${data.amount_usdt}",
-                payload=f"deposit:{order.id}",
+                description=f"${data.amount_usdt}",
+                payload=f"wallet:{payment.id}",
                 currency="XTR",
-                prices=[
-                    LabeledPrice(
-                        label="Пополнение баланса",
-                        amount=stars_amount
-                    )
-                ]
+                prices=[LabeledPrice(label="Deposit", amount=stars_amount)]
             )
         )
 
+        await session.commit()
+
         return {
             "invoice_link": invoice_link,
-            "order_id": order.id,
-            "stars": stars_amount
+            "payment_id": payment.id
         }
-
-    
-    
     
 
 
@@ -397,17 +394,6 @@ async def successful_payment(message: Message):
                     order.server_id,
                     order.idTarif
                 )
-            elif order.purpose_order == "deposit":
-                wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == order.idUser))
-                wallet.balance_usdt += Decimal(order.amount)
-
-                tx = WalletTransaction(
-                    wallet_id=wallet.id,
-                    amount=Decimal(order.amount),
-                    type="deposit",
-                    description=f"Пополнение баланса +${order.amount}"
-                )
-                session.add(tx)
             else:
                 raise Exception("Unknown order purpose")
 
@@ -501,40 +487,29 @@ async def wallet_deposit_crypto(data: WalletDepositCryptoRequest):
         if not user:
             raise HTTPException(404, "User not found")
 
-        if data.amount_usdt < Decimal("0.1"):
-            raise HTTPException(400, "Minimum deposit is $0.1")
-
-        order = Order(
-            idUser=user.idUser,
-            server_id=None,
-            idTarif=None,
-            purpose_order="deposit",
-            amount=data.amount_usdt,
-            currency="USDT",
-            status="pending"
+        payment = Payment(
+            order_id=None,
+            provider="cryptobot",
+            provider_payment_id=None,
+            status="pending",
+            meta={"tg_id": user.tg_id, "amount_usdt": str(data.amount_usdt)}
         )
-        session.add(order)
+        session.add(payment)
         await session.flush()
 
         invoice = await crypto.create_invoice(
             asset="USDT",
             amount=float(data.amount_usdt),
-            payload=str(order.id)
+            payload=str(payment.id)
         )
 
-        payment = Payment(
-            order_id=order.id,
-            provider="cryptobot",
-            provider_payment_id=str(invoice.invoice_id),
-            status="pending"
-        )
-        session.add(payment)
+        payment.provider_payment_id = str(invoice.invoice_id)
         await session.commit()
 
         return {
-            "invoice_url": invoice.mini_app_invoice_url,
-            "order_id": order.id
+            "invoice_url": invoice.mini_app_invoice_url
         }
+
 
 
 
