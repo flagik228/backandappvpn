@@ -481,6 +481,60 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
             "invoice_url": invoice.mini_app_invoice_url, "order_id": order.id
         }
 
+# ---- ПРОДЛЕНИЕ cryptobot
+class RenewCryptoInvoiceRequest(BaseModel):
+    tg_id: int
+    subscription_id: int
+    tariff_id: int
+
+@app.post("/api/vpn/renew-crypto-invoice")
+async def renew_crypto_invoice(data: RenewCryptoInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        sub = await session.get(VPNSubscription, data.subscription_id)
+        if not sub:
+            raise HTTPException(404, "Subscription not found")
+
+        tariff = await session.get(Tariff, data.tariff_id)
+        if not tariff or not tariff.is_active:
+            raise HTTPException(404, "Tariff not found")
+        server = await session.get(ServersVPN, sub.idServerVPN)
+
+        order = Order(
+            idUser=user.idUser,
+            server_id=server.idServerVPN,
+            idTarif=tariff.idTarif,
+            purpose_order="extension",
+            amount=Decimal(tariff.price_tarif),
+            currency="USDT",
+            status="pending"
+        )
+        session.add(order)
+        await session.flush()
+
+        invoice = await crypto.create_invoice(
+            asset="USDT",
+            amount=float(tariff.price_tarif),
+            payload=f"renew:{order.id}"
+        )
+
+        payment = Payment(
+            order_id=order.id,
+            provider="cryptobot",
+            provider_payment_id=str(invoice.invoice_id),
+            status="pending"
+        )
+        session.add(payment)
+        await session.commit()
+
+        return {
+            "invoice_url": invoice.mini_app_invoice_url,
+            "order_id": order.id
+        }
+
 
 # ---- ПОПОПЛЛНЕНИЕ cryptobot
 @app.post("/api/wallet/deposit/crypto")
@@ -560,6 +614,46 @@ async def crypto_webhook(data: dict):
                 text=("✅ Баланс успешно пополнен!"))
             
             return {"ok": True}
+        
+        # ===== ПРОДЛЕНИЕ VPN =====
+        if prefix == "renew":
+            order = await session.get(Order, entity_id)
+            if not order or order.status != "pending":
+                return {"ok": True}
+
+            order.status = "processing"
+
+            tariff = await session.get(Tariff, order.idTarif)
+            server = await session.get(ServersVPN, order.server_id)
+            user = await session.get(User, order.idUser)
+
+            try:
+                vpn_data = await pay_and_extend_vpn(
+                    order.idUser,
+                    order.server_id,
+                    order.idTarif
+                )
+            except Exception:
+                order.status = "failed"
+                await session.commit()
+                return {"ok": True}
+
+            order.status = "completed"
+            await process_referral_reward(session, order)
+            await session.commit()
+
+            await bot.send_message(
+                chat_id=user.tg_id,
+                text=(
+                    f"♻️ <b>VPN успешно продлён!</b>\n"
+                    f"➕ Добавлено дней: {vpn_data['days_added']}\n"
+                    f"🕒 Новый срок: {vpn_data['expires_at_human']}"
+                ),
+                parse_mode="HTML"
+            )
+
+            return {"ok": True}
+
 
         # ===== ПОКУПКА VPN (старый код) =====
         if prefix.isdigit() or prefix == "":
