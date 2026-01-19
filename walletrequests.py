@@ -60,6 +60,34 @@ async def create_stars_deposit(tg_id: int, amount_usdt: Decimal):
 
 
 # =========================
+# Создание пополнения (CryptoBot)
+async def create_crypto_deposit(tg_id: int, amount_usdt: Decimal):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise Exception("User not found")
+
+        if amount_usdt < Decimal("0.1"):
+            raise Exception("Minimum amount is 0.1 USDT")
+
+        op = WalletOperation(
+            idUser=user.idUser,
+            type="deposit",
+            amount_usdt=amount_usdt,
+            provider="cryptobot",
+            status="pending"
+        )
+        session.add(op)
+        await session.flush()
+        await session.commit()
+
+        return {
+            "wallet_operation_id": op.id,
+            "amount_usdt": str(amount_usdt)
+        }
+
+
+# =========================
 # Завершение пополнения
 async def complete_wallet_deposit(session, wallet_operation_id: int):
     op = await session.get(WalletOperation, wallet_operation_id)

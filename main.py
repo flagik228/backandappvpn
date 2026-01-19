@@ -482,18 +482,55 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
         }
 
 
+# ---- ПОПОПЛЛНЕНИЕ cryptobot
+@app.post("/api/wallet/deposit/crypto")
+async def wallet_deposit_crypto(data: WalletDepositRequest):
+    result = await wr.create_crypto_deposit(
+        data.tg_id,
+        Decimal(data.amount_usdt)
+    )
+
+    # Создаём инвойс CryptoBot
+    invoice = await crypto.create_invoice(
+        asset="USDT",
+        amount=float(data.amount_usdt),
+        payload=f"wallet:{result['wallet_operation_id']}"
+    )
+
+    async with async_session() as session:
+        payment = Payment(
+            wallet_operation_id=result["wallet_operation_id"],
+            provider="cryptobot",
+            provider_payment_id=str(invoice.invoice_id),
+            status="pending"
+        )
+        session.add(payment)
+        await session.commit()
+
+    return {
+        "invoice_url": invoice.mini_app_invoice_url,
+        "order_id": result["wallet_operation_id"]
+    }
 
 
-@app.post("/api/crypto/webhook") # webhook Cryptobot
+
+# ---- Webhoock от Cryptobot
+@app.post("/api/crypto/webhook")
 async def crypto_webhook(data: dict):
     if data.get("update_type") != "invoice_paid":
         return {"ok": True}
 
     payload = data.get("payload", {})
     invoice_id = str(payload.get("invoice_id"))
-    order_id = payload.get("payload")
+    raw_payload = payload.get("payload")
 
-    if not invoice_id or not order_id:
+    if not invoice_id or not raw_payload:
+        return {"ok": True}
+
+    try:
+        prefix, entity_id = raw_payload.split(":")
+        entity_id = int(entity_id)
+    except:
         return {"ok": True}
 
     async with async_session() as session:
@@ -501,49 +538,63 @@ async def crypto_webhook(data: dict):
             select(Payment).where(
                 Payment.provider == "cryptobot",
                 Payment.provider_payment_id == invoice_id
-            ))
-
-        if not payment:
-            return {"ok": True}
-
-        order = await session.get(Order, int(order_id))
-        if not order or order.status != "pending":
-            return {"ok": True}
-
-        # отмечаем оплату
-        payment.status = "paid"
-        order.status = "processing"
-
-        tariff = await session.get(Tariff, order.idTarif)
-        server = await session.get(ServersVPN, order.server_id)
-        user = await session.get(User, order.idUser)
-
-        # СОЗДАЁМ VPN
-        try:
-            vpn_data = await create_vpn_xui(order.idUser,order.server_id,tariff.days)
-
-        except Exception:
-            order.status = "failed"
-            await session.commit()
-            return {"ok": True}
-
-        order.status = "completed"
-        await process_referral_reward(session, order)
-        await session.commit()
-        
-        await bot.send_message(
-            chat_id=user.tg_id,
-            text=(
-                f"✅ <b>VPN готов!</b>\n"
-                f"Сервер: {server.nameVPN}\n"
-                f"Действует до: {vpn_data['expires_at_human']}\n\n"
-                f"<b>Ваш ключ:</b>\n"
-                f"<code>{vpn_data['access_data']}</code>"
-            ),
-            parse_mode="HTML"
+            )
         )
+        if not payment or payment.status == "paid":
+            return {"ok": True}
+
+        payment.status = "paid"
+
+        # ===== ПОПОЛНЕНИЕ БАЛАНСА =====
+        if prefix == "wallet":
+            op = await session.get(WalletOperation, entity_id)
+            if not op or op.status != "pending":
+                return {"ok": True}
+
+            await wr.complete_wallet_deposit(session, op.id)
+            await session.commit()
+            # await bot.send_message(
+                #chat_id=user.tg_id,
+                #text=("✅ Баланс успешно пополнен!"))
+            return {"ok": True}
+
+        # ===== ПОКУПКА VPN (старый код) =====
+        if prefix.isdigit() or prefix == "":
+            order = await session.get(Order, entity_id)
+            if not order or order.status != "pending":
+                return {"ok": True}
+
+            order.status = "processing"
+
+            tariff = await session.get(Tariff, order.idTarif)
+            server = await session.get(ServersVPN, order.server_id)
+            user = await session.get(User, order.idUser)
+
+            try:
+                vpn_data = await create_vpn_xui(order.idUser, order.server_id, tariff.days)
+            except Exception:
+                order.status = "failed"
+                await session.commit()
+                return {"ok": True}
+
+            order.status = "completed"
+            await process_referral_reward(session, order)
+            await session.commit()
+
+            await bot.send_message(
+                chat_id=user.tg_id,
+                text=(
+                    f"✅ <b>VPN готов!</b>\n"
+                    f"Сервер: {server.nameVPN}\n"
+                    f"Действует до: {vpn_data['expires_at_human']}\n\n"
+                    f"<b>Ваш ключ:</b>\n"
+                    f"<code>{vpn_data['access_data']}</code>"
+                ),
+                parse_mode="HTML"
+            )
 
     return {"ok": True}
+
 
 
 # Проверка успешного заказа после покупки
@@ -569,7 +620,6 @@ async def get_wallet_operation_status(operation_id: int):
         return {
             "status": op.status
         }
-
 
 
 @app.get("/api/rate/xtr")
