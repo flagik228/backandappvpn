@@ -15,7 +15,8 @@ from aiogram.filters import CommandStart
 from models import init_db, async_session, UserStart, User, WalletTransaction, UserTask, UserReward, ExchangeRate, Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
 import requestsfile as rq
 import adminrequests as rqadm
-from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward, get_user_wallet
+import walletrequests as wr
+from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward
 from tasksrequests import TASKS, check_and_complete_task, activate_reward
 from cryptopay_client import crypto
 from scheduler import start_scheduler
@@ -122,7 +123,7 @@ async def register_user(data: RegisterUser):
 # баланс юзера
 @app.get("/api/user/wallet/{tg_id}")
 async def get_wallet(tg_id: int):
-    wallet = await get_user_wallet(tg_id)
+    wallet = await rq.get_user_wallet(tg_id)
     if not wallet:
         raise HTTPException(404, "Wallet not found")
     return wallet
@@ -205,59 +206,6 @@ async def create_invoice(data: CreateInvoiceRequest):
         return {"invoice_link": invoice_link, "order_id": order.id}
 
 
-# ПОПОЛНЕНИЕ БАЛАНСА (Stars)
-class WalletDepositStarsRequest(BaseModel):
-    tg_id: int
-    amount_usdt: Decimal
-
-
-@app.post("/api/wallet/deposit/stars")
-async def wallet_deposit_stars(data: WalletDepositStarsRequest):
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
-        if not user:
-            raise HTTPException(404, "User not found")
-
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT")
-        )
-        if not rate:
-            raise HTTPException(500, "Exchange rate not set")
-
-        stars_amount = int(data.amount_usdt / rate.rate)
-        if stars_amount < 1:
-            stars_amount = 1
-
-        # ✅ создаём Payment, а НЕ Order
-        payment = Payment(
-            order_id=None,
-            provider="telegram_stars",
-            provider_payment_id=None,
-            status="pending",
-            meta={"tg_id": user.tg_id, "amount_usdt": str(data.amount_usdt)}
-        )
-        session.add(payment)
-        await session.flush()
-
-        invoice_link = await bot(
-            CreateInvoiceLink(
-                title="Пополнение баланса",
-                description=f"${data.amount_usdt}",
-                payload=f"wallet:{payment.id}",
-                currency="XTR",
-                prices=[LabeledPrice(label="Deposit", amount=stars_amount)]
-            )
-        )
-
-        await session.commit()
-
-        return {
-            "invoice_link": invoice_link,
-            "payment_id": payment.id
-        }
-    
-
-
 # -------- ПРОДЛЕНИЕ
 class RenewInvoiceRequest(BaseModel):
     tg_id: int
@@ -315,7 +263,36 @@ async def renew_invoice(data: RenewInvoiceRequest):
             )
         )
 
-        return {"invoice_link": invoice_link, "order_id": order.id} 
+        return {"invoice_link": invoice_link, "order_id": order.id}
+
+
+# -------- ПОПОЛНЕНИЕ
+class WalletDepositRequest(BaseModel):
+    tg_id: int
+    amount_usdt: Decimal
+
+
+@app.post("/api/wallet/deposit/stars")
+async def wallet_deposit_stars(data: WalletDepositRequest):
+    result = await wr.create_stars_deposit(data.tg_id,Decimal(data.amount_usdt))
+
+    invoice_link = await bot(CreateInvoiceLink(
+            title="Пополнение баланса",
+            description=f"Баланс +${data.amount_usdt}",
+            payload=f"wallet:{result['wallet_operation_id']}",
+            currency="XTR",
+            prices=[
+                LabeledPrice(label="Пополнение баланса", amount=result["stars_amount"])
+            ]
+        )
+    )
+
+    return {
+        "invoice_link": invoice_link,
+        "order_id": result["wallet_operation_id"],
+        "stars": result["stars_amount"]
+    }
+
 
 
 # --- Создание заказа Stars --- 
@@ -356,8 +333,25 @@ async def pre_checkout(q: PreCheckoutQuery):
 async def successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
 
-    prefix, order_id = payload.split(":")
+    prefix, order_id, entity_id = payload.split(":")
     order_id = int(order_id)
+    entity_id = int(entity_id)
+    
+    async with async_session() as session:
+        if prefix == "wallet":
+            payment = Payment(
+                wallet_operation_id=entity_id,
+                provider="telegram_stars",
+                provider_payment_id=message.successful_payment.telegram_payment_charge_id,
+                status="paid"
+            )
+            session.add(payment)
+
+            await wr.complete_wallet_deposit(session, entity_id)
+            await session.commit()
+
+            await message.answer("✅ Баланс успешно пополнен!")
+            return
 
     async with async_session() as session:
         order = await session.get(Order, order_id)
@@ -471,43 +465,6 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
 
         return {
             "invoice_url": invoice.mini_app_invoice_url, "order_id": order.id
-        }
-
-
-# ПОПОЛНЕНИЕ баланса через Cryptobot
-class WalletDepositCryptoRequest(BaseModel):
-    tg_id: int
-    amount_usdt: Decimal
-
-
-@app.post("/api/wallet/deposit/crypto")
-async def wallet_deposit_crypto(data: WalletDepositCryptoRequest):
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
-        if not user:
-            raise HTTPException(404, "User not found")
-
-        payment = Payment(
-            order_id=None,
-            provider="cryptobot",
-            provider_payment_id=None,
-            status="pending",
-            meta={"tg_id": user.tg_id, "amount_usdt": str(data.amount_usdt)}
-        )
-        session.add(payment)
-        await session.flush()
-
-        invoice = await crypto.create_invoice(
-            asset="USDT",
-            amount=float(data.amount_usdt),
-            payload=str(payment.id)
-        )
-
-        payment.provider_payment_id = str(invoice.invoice_id)
-        await session.commit()
-
-        return {
-            "invoice_url": invoice.mini_app_invoice_url
         }
 
 

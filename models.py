@@ -24,7 +24,7 @@ async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
 class Base(AsyncAttrs, DeclarativeBase):
     pass
 
-    # юзеры
+# --- USERS ---
 class UserStart(Base):
     __tablename__ = "user_starts"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -43,16 +43,31 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     
     
-    # внутрений баланс пользователя
+# --- Wallet ---
 class UserWallet(Base):
     __tablename__ = "user_wallets"
     id: Mapped[int] = mapped_column(primary_key=True)
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"),unique=True)
     balance_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0.0"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class WalletOperation(Base):
+    __tablename__ = "wallet_operations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"))
+    type: Mapped[str] = mapped_column(String(50)) # deposit / withdrawal
+    amount_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    status: Mapped[str] = mapped_column(String(50), default="pending") # pending / paid / completed / failed
+
+    provider: Mapped[str] = mapped_column(String(50)) # stars / cryptobot / yukassa
+    meta: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    payments = relationship("Payment", back_populates="wallet_operation")
     
     
-    # история транзакций баланса
 class WalletTransaction(Base):
     __tablename__ = "wallet_transactions"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -61,8 +76,11 @@ class WalletTransaction(Base):
     type: Mapped[str] = mapped_column(String(200))  # referral / deposit / withdrawal
     description: Mapped[str] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    wallet = relationship("UserWallet", back_populates="transactions")
 
 
+# --- TASKS ---
 class UserTask(Base):
     __tablename__ = "user_tasks"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -84,7 +102,7 @@ class UserReward(Base):
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-    # категории VPN
+# --- VPN ---
 class TypesVPN(Base):
     __tablename__ = "types_vpn"
     idTypeVPN: Mapped[int] = mapped_column(primary_key=True)
@@ -132,11 +150,11 @@ class Tariff(Base):
 
     server = relationship("ServersVPN", back_populates="tariffs")
     
-    # курс stars
+    # курсы
 class ExchangeRate(Base):
     __tablename__ = "exchange_rates"
     id: Mapped[int] = mapped_column(primary_key=True)
-    pair: Mapped[str] = mapped_column(String(100), unique=True)  # "XTR_USDT"
+    pair: Mapped[str] = mapped_column(String(100), unique=True)  # "XTR_USDT", "RUB_USDT"
     rate: Mapped[Decimal] = mapped_column(Numeric(18, 8))   # 0.01301886
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     
@@ -159,11 +177,14 @@ class Order(Base):
 class Payment(Base):
     __tablename__ = "payments"
     id: Mapped[int] = mapped_column(primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), nullable=True)
+    wallet_operation_id: Mapped[int] = mapped_column(ForeignKey("wallet_operations.id", ondelete="CASCADE"), nullable=True)
     provider: Mapped[str] = mapped_column(String(200))  # stars / cryptobot
     provider_payment_id: Mapped[str] = mapped_column(String(200))   # ID платежа у платёжного провайдера.
     status: Mapped[str] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    wallet_operation = relationship("WalletOperation", back_populates="payments")
 
 
 class VPNSubscription(Base):
@@ -185,7 +206,7 @@ class VPNSubscription(Base):
     status: Mapped[str] = mapped_column(String(30), default="active")  # active / expired
 
 
-    # конфиг для рефералки
+# --- REFERALS ---
 class ReferralConfig(Base):
     __tablename__ = "referral_config"
     id: Mapped[int] = mapped_column(primary_key=True)
