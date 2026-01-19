@@ -12,7 +12,7 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 from aiogram.filters import CommandStart
 
-from models import init_db, async_session, UserStart, User, WalletTransaction, UserTask, UserReward, ExchangeRate, Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
+from models import init_db, async_session, UserStart, User, WalletOperation, WalletTransaction, UserTask, UserReward, ExchangeRate,Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
 import requestsfile as rq
 import adminrequests as rqadm
 import walletrequests as wr
@@ -333,28 +333,48 @@ async def pre_checkout(q: PreCheckoutQuery):
 async def successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
 
-    prefix, order_id, entity_id = payload.split(":")
-    order_id = int(order_id)
-    entity_id = int(entity_id)
-    
-    async with async_session() as session:
-        if prefix == "wallet":
+    try:
+        prefix, entity_id = payload.split(":")
+        entity_id = int(entity_id)
+    except Exception:
+        # если payload битый — просто игнор
+        return
+
+    provider_payment_id = message.successful_payment.telegram_payment_charge_id
+
+    # =========================
+    # ПОПОЛНЕНИЕ БАЛАНСА
+    # =========================
+    if prefix == "wallet":
+        async with async_session() as session:
+            op = await session.get(WalletOperation, entity_id)
+            if not op or op.status != "pending":
+                return
+
+            op.status = "completed"
+
             payment = Payment(
-                wallet_operation_id=entity_id,
+                wallet_operation_id=op.id,
                 provider="telegram_stars",
-                provider_payment_id=message.successful_payment.telegram_payment_charge_id,
+                provider_payment_id=provider_payment_id,
                 status="paid"
             )
             session.add(payment)
 
-            await wr.complete_wallet_deposit(session, entity_id)
+            await wr.complete_wallet_deposit(session, op.id)
             await session.commit()
 
-            await message.answer("✅ Баланс успешно пополнен!")
-            return
+        await message.answer("✅ Баланс успешно пополнен!")
+        return
+
+    # =========================
+    # ПОКУПКА / ПРОДЛЕНИЕ VPN
+    # =========================
+    if prefix not in ("vpn", "renew"):
+        return
 
     async with async_session() as session:
-        order = await session.get(Order, order_id)
+        order = await session.get(Order, entity_id)
         if not order or order.status != "pending":
             return
 
@@ -363,7 +383,7 @@ async def successful_payment(message: Message):
         payment = Payment(
             order_id=order.id,
             provider="telegram_stars",
-            provider_payment_id=message.successful_payment.telegram_payment_charge_id,
+            provider_payment_id=provider_payment_id,
             status="paid"
         )
         session.add(payment)
@@ -394,7 +414,7 @@ async def successful_payment(message: Message):
         except Exception as e:
             order.status = "failed"
             await session.commit()
-            await message.answer(f"❌ Ошибка: {e}")
+            await message.answer(f"❌ Ошибка создания VPN: {e}")
             return
 
         order.status = "completed"
@@ -418,6 +438,7 @@ async def successful_payment(message: Message):
                 f"🕒 Новый срок: {vpn_data['expires_at_human']}",
                 parse_mode="HTML"
             )
+
 
 
 
