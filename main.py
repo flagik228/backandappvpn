@@ -337,21 +337,16 @@ async def successful_payment(message: Message):
         prefix, entity_id = payload.split(":")
         entity_id = int(entity_id)
     except Exception:
-        # если payload битый — просто игнор
         return
 
     provider_payment_id = message.successful_payment.telegram_payment_charge_id
 
-    # =========================
     # ПОПОЛНЕНИЕ БАЛАНСА
-    # =========================
     if prefix == "wallet":
         async with async_session() as session:
             op = await session.get(WalletOperation, entity_id)
             if not op or op.status != "pending":
                 return
-
-            op.status = "completed"
 
             payment = Payment(
                 wallet_operation_id=op.id,
@@ -367,9 +362,7 @@ async def successful_payment(message: Message):
         await message.answer("✅ Баланс успешно пополнен!")
         return
 
-    # =========================
     # ПОКУПКА / ПРОДЛЕНИЕ VPN
-    # =========================
     if prefix not in ("vpn", "renew"):
         return
 

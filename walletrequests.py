@@ -9,7 +9,6 @@ from models import async_session
 
 # =========================
 # Получить кошелёк
-# =========================
 async def get_user_wallet(tg_id: int):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
@@ -27,7 +26,6 @@ async def get_user_wallet(tg_id: int):
 
 # =========================
 # Создание пополнения (Stars)
-# =========================
 async def create_stars_deposit(tg_id: int, amount_usdt: Decimal):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
@@ -63,15 +61,12 @@ async def create_stars_deposit(tg_id: int, amount_usdt: Decimal):
 
 # =========================
 # Завершение пополнения
-# =========================
 async def complete_wallet_deposit(session, wallet_operation_id: int):
     op = await session.get(WalletOperation, wallet_operation_id)
     if not op or op.status != "pending":
         return
 
-    wallet = await session.scalar(
-        select(UserWallet).where(UserWallet.idUser == op.idUser)
-    )
+    wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == op.idUser))
 
     wallet.balance_usdt += op.amount_usdt
     op.status = "completed"
