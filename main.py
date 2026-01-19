@@ -550,12 +550,15 @@ async def crypto_webhook(data: dict):
             op = await session.get(WalletOperation, entity_id)
             if not op or op.status != "pending":
                 return {"ok": True}
+            
+            user = await session.get(User, op.idUser)
 
             await wr.complete_wallet_deposit(session, op.id)
             await session.commit()
-            # await bot.send_message(
-                #chat_id=user.tg_id,
-                #text=("✅ Баланс успешно пополнен!"))
+            await bot.send_message(
+                chat_id=user.tg_id,
+                text=("✅ Баланс успешно пополнен!"))
+            
             return {"ok": True}
 
         # ===== ПОКУПКА VPN (старый код) =====
@@ -652,10 +655,6 @@ async def get_tariffs(server_id: int):
         return await rq.get_server_tariffs(server_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-
-    
 
 
 # ======================
