@@ -50,6 +50,8 @@ class UserWallet(Base):
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"),unique=True)
     balance_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0.0"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    transactions = relationship("WalletTransaction", back_populates="wallet", cascade="all, delete-orphan")
 
 
 class WalletOperation(Base):
