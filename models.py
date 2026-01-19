@@ -24,7 +24,6 @@ async_session = async_sessionmaker(bind=engine, expire_on_commit=False)
 class Base(AsyncAttrs, DeclarativeBase):
     pass
 
-
     # юзеры
 class UserStart(Base):
     __tablename__ = "user_starts"

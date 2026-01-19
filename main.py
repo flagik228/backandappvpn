@@ -195,7 +195,70 @@ async def create_invoice(data: CreateInvoiceRequest):
                 prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)]
             )
         )
-        return {"invoice_link": invoice_link, "order_id": order.id} 
+        return {"invoice_link": invoice_link, "order_id": order.id}
+
+
+# ПОПОЛНЕНИЕ БАЛАНСА (Stars)
+class WalletDepositStarsRequest(BaseModel):
+    tg_id: int
+    amount_usdt: Decimal
+
+
+@app.post("/api/wallet/deposit/stars")
+async def wallet_deposit_stars(data: WalletDepositStarsRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        if data.amount_usdt < Decimal("0.1"):
+            raise HTTPException(400, "Minimum deposit is $0.1")
+
+        rate = await session.scalar(
+            select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT")
+        )
+        if not rate:
+            raise HTTPException(500, "Exchange rate not set")
+
+        stars_amount = int(data.amount_usdt / rate.rate)
+        if stars_amount < 1:
+            stars_amount = 1
+
+        order = Order(
+            idUser=user.idUser,
+            purpose_order="deposit",
+            amount=data.amount_usdt,
+            currency="USDT",
+            status="pending"
+        )
+        session.add(order)
+        await session.flush()
+        await session.commit()
+
+        invoice_link = await bot(
+            CreateInvoiceLink(
+                title="Пополнение баланса",
+                description=f"Пополнение на ${data.amount_usdt}",
+                payload=f"deposit:{order.id}",
+                currency="XTR",
+                prices=[
+                    LabeledPrice(
+                        label="Пополнение баланса",
+                        amount=stars_amount
+                    )
+                ]
+            )
+        )
+
+        return {
+            "invoice_link": invoice_link,
+            "order_id": order.id,
+            "stars": stars_amount
+        }
+
+    
+    
+    
 
 
 # -------- ПРОДЛЕНИЕ
@@ -256,68 +319,6 @@ async def renew_invoice(data: RenewInvoiceRequest):
         )
 
         return {"invoice_link": invoice_link, "order_id": order.id} 
-
-
-
-# ПОПОЛНЕНИЕ БАЛАНСА (Stars)
-class WalletDepositStarsRequest(BaseModel):
-    tg_id: int
-    amount_usdt: Decimal
-
-
-@app.post("/api/wallet/deposit/stars")
-async def wallet_deposit_stars(data: WalletDepositStarsRequest):
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
-        if not user:
-            raise HTTPException(404, "User not found")
-
-        if data.amount_usdt < Decimal("0.1"):
-            raise HTTPException(400, "Minimum deposit is $0.1")
-
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT")
-        )
-        if not rate:
-            raise HTTPException(500, "Exchange rate not set")
-
-        stars_amount = int(data.amount_usdt / rate.rate)
-        if stars_amount < 1:
-            stars_amount = 1
-
-        order = Order(
-            idUser=user.idUser,
-            server_id=None,
-            idTarif=None,
-            purpose_order="deposit",
-            amount=data.amount_usdt,
-            currency="USDT",
-            status="pending"
-        )
-        session.add(order)
-        await session.flush()
-        await session.commit()
-
-        invoice_link = await bot(
-            CreateInvoiceLink(
-                title="Пополнение баланса",
-                description=f"Пополнение на ${data.amount_usdt}",
-                payload=f"deposit:{order.id}",
-                currency="XTR",
-                prices=[
-                    LabeledPrice(
-                        label="Пополнение баланса",
-                        amount=stars_amount
-                    )
-                ]
-            )
-        )
-
-        return {
-            "invoice_link": invoice_link,
-            "order_id": order.id,
-            "stars": stars_amount
-        }
 
 
 # --- Создание заказа Stars --- 
@@ -632,6 +633,16 @@ async def get_tariffs(server_id: int):
         return await rq.get_server_tariffs(server_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/rate/xtr")
+async def get_xtr_rate():
+    async with async_session() as session:
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        if not rate:
+            raise HTTPException(404, "Rate not set")
+
+        return {"rate": str(rate.rate)}
+
     
 
 
