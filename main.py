@@ -465,7 +465,7 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
         invoice = await crypto.create_invoice(
             asset="USDT",
             amount=float(tariff.price_tarif),
-            payload=str(order.id)
+            payload=f"buy:{order.id}"
         )
 
         payment = Payment(
@@ -653,8 +653,8 @@ async def crypto_webhook(data: dict):
             return {"ok": True}
 
 
-        # ===== ПОКУПКА VPN (старый код) =====
-        if prefix.isdigit() or prefix == "":
+        # ===== ПОКУПКА VPN =====
+        if prefix == "buy":
             order = await session.get(Order, entity_id)
             if not order or order.status != "pending":
                 return {"ok": True}
