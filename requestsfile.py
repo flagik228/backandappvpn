@@ -96,6 +96,7 @@ async def get_servers_full():
                 "idServerVPN": s.idServerVPN,
                 "nameVPN": s.nameVPN,
                 "type_vpn": type_vpn.nameType if type_vpn else "",
+                "type_description": type_vpn.descriptionType if type_vpn else "", #
                 "country": country.nameCountry if country else "",
                 "tariffs": tariffs_list
             })
