@@ -262,22 +262,18 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         
         
 # --- ОПЛАТА И ПРОДЛЕНИЕ --- 
-async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
+async def pay_and_extend_vpn(subscription_id: int, tariff_id: int):
     async with async_session() as session:
         tariff = await session.get(Tariff, tariff_id)
         if not tariff:
             raise ValueError("Tariff not found")
 
-        sub = await session.scalar(select(VPNSubscription).where(
-                VPNSubscription.idUser == user_id,
-                VPNSubscription.idServerVPN == server_id
-            )
-        )
+        sub = await session.get(VPNSubscription, subscription_id)
 
         if not sub:
             raise ValueError("Subscription not found")
 
-        server = await session.get(ServersVPN, server_id)
+        server = await session.get(ServersVPN, sub.idServerVPN)
         xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
 
         inbound = await xui.get_inbound_by_port(server.inbound_port)
@@ -299,7 +295,7 @@ async def pay_and_extend_vpn(user_id: int, server_id: int, tariff_id: int):
 
         sub.is_active = True
         sub.status = "active"
-        await recalc_server_load(session, server_id)
+        await recalc_server_load(session, sub.idServerVPN)
         await session.commit()
 
         return {

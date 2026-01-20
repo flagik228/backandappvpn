@@ -242,6 +242,7 @@ async def renew_invoice(data: RenewInvoiceRequest):
             idUser=user.idUser,
             server_id=server.idServerVPN,
             idTarif=tariff.idTarif,
+            subscription_id=sub.id, #
             purpose_order="extension",
             amount=price_usdt,
             currency="USDT",
@@ -397,9 +398,8 @@ async def successful_payment(message: Message):
 
             elif order.purpose_order == "extension":
                 vpn_data = await pay_and_extend_vpn(
-                    order.idUser,
-                    order.server_id,
-                    order.idTarif
+                    subscription_id=order.subscription_id,
+                    tariff_id=order.idTarif
                 )
             else:
                 raise Exception("Unknown order purpose")
@@ -506,6 +506,7 @@ async def renew_crypto_invoice(data: RenewCryptoInvoiceRequest):
             idUser=user.idUser,
             server_id=sub.idServerVPN,
             idTarif=tariff.idTarif,
+            subscription_id=sub.id, #
             purpose_order="extension",
             amount=Decimal(tariff.price_tarif),
             currency="USDT",
@@ -587,8 +588,7 @@ async def crypto_webhook(data: dict):
         return {"ok": True}
 
     async with async_session() as session:
-        payment = await session.scalar(
-            select(Payment).where(
+        payment = await session.scalar(select(Payment).where(
                 Payment.provider == "cryptobot",
                 Payment.provider_payment_id == invoice_id
             )
@@ -628,9 +628,8 @@ async def crypto_webhook(data: dict):
 
             try:
                 vpn_data = await pay_and_extend_vpn(
-                    order.idUser,
-                    order.server_id,
-                    order.idTarif
+                    subscription_id=order.subscription_id,
+                    tariff_id=order.idTarif
                 )
             except Exception:
                 order.status = "failed"
