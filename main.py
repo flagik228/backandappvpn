@@ -714,6 +714,17 @@ async def buy_from_balance(data: BuyFromBalanceRequest):
             tg_id=data.tg_id,
             tariff_id=data.tariff_id
         )
+        
+        await bot.send_message(chat_id=data.tg_id,
+            text=(
+                f"✅ <b>VPN готов!</b>\n"
+                f"Сервер: {result['server_name']}\n"
+                f"Действует до: {result['expires_at_human']}\n\n"
+                f"<b>Ваш ключ:</b>\n"
+                f"<code>{result['access_data']}</code>"
+            ),parse_mode="HTML"
+        )
+        
         return result
 
     except Exception as e:

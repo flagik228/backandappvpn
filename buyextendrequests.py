@@ -207,7 +207,7 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
         tx = WalletTransaction(
             wallet_id=wallet.id,
             amount=-price,
-            type="withdrawal",
+            type="buy",
             description=f"VPN purchase ({tariff.days} days)"
         )
         session.add(tx)
