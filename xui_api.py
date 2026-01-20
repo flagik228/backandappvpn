@@ -65,8 +65,7 @@ class XUIApi:
             raise Exception("Inbound не найден")
 
         client_uuid = str(uuid.uuid4())
-        expiry_time = int(
-            (datetime.utcnow() + timedelta(days=days)).timestamp() * 1000)
+        expiry_time = int((datetime.utcnow() + timedelta(days=days)).timestamp() * 1000)
 
         new_client = Client(
             id=client_uuid,
@@ -100,7 +99,7 @@ class XUIApi:
         if not old_client:
             raise Exception("Client not found")
 
-        # 🧠 считаем новое время
+        # считаем новое время
         now_ms = int(datetime.utcnow().timestamp() * 1000)
         add_ms = days * 86400000
 
@@ -113,7 +112,7 @@ class XUIApi:
 
         client_uuid = old_client.id
 
-        # 1️⃣ удаляем клиента
+        # удаляем клиента
         inbound.settings.clients = [
             c for c in inbound.settings.clients
             if c.email != client_email
@@ -122,7 +121,7 @@ class XUIApi:
         await asyncio.to_thread(self.api.inbound.update,inbound_id,inbound)
         await asyncio.sleep(0.3)
 
-        # 2️⃣ создаём нового (С ТЕМ ЖЕ UUID)
+        # создаём нового (С ТЕМ ЖЕ UUID)
         new_client = Client(
             id=client_uuid,
             email=client_email,
@@ -143,10 +142,7 @@ class XUIApi:
     async def remove_client(self, inbound_id: int, client_uuid: str):
         await self.login()
 
-        inbound = await asyncio.to_thread(
-            self.api.inbound.get_by_id,
-            inbound_id
-        )
+        inbound = await asyncio.to_thread(self.api.inbound.get_by_id,inbound_id)
 
         for client in inbound.settings.clients or []:
             if client.id == client_uuid:

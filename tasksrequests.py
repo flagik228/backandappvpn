@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
 from models import async_session, User, Order, UserTask, UserReward, VPNSubscription, ServersVPN
-from requestsfile import pay_and_extend_vpn, create_vpn_xui
+import buyextendrequests as berq
 from xui_api import XUIApi
 
 
@@ -80,7 +80,6 @@ async def check_and_complete_task(user: User, task: dict):
 # ---------- Активация награды ----------
 async def activate_reward(user_id: int, reward_id: int, server_id: int):
     async with async_session() as session:
-        # async with session.begin():
 
         reward = await session.scalar(select(UserReward).where(
                 UserReward.id == reward_id,
@@ -135,7 +134,7 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
 
         # ===== CREATE =====
         else:
-            await create_vpn_xui(
+            await berq.create_vpn_xui(
                 user_id=user_id,
                 server_id=server_id,
                 tariff_days=reward.days

@@ -14,10 +14,10 @@ from aiogram.filters import CommandStart
 
 from models import init_db, async_session, UserStart, User, WalletOperation, WalletTransaction, UserTask, UserReward, ExchangeRate,Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
 import requestsfile as rq
+import buyextendrequests as berq
+import walletrequests as wrq
+import tasksrequests as taskrq
 import adminrequests as rqadm
-import walletrequests as wr
-from requestsfile import create_order, pay_and_extend_vpn, create_vpn_xui, process_referral_reward
-from tasksrequests import TASKS, check_and_complete_task, activate_reward
 from cryptopay_client import crypto
 from scheduler import start_scheduler
 
@@ -92,7 +92,7 @@ async def register_user(data: RegisterUser):
                 await session.commit()
             return {"status": "exists", "idUser": user.idUser}
 
-        # 🔑 ищем referrer через start
+        # ищем referrer через start
         start = await session.scalar(select(UserStart).where(UserStart.tg_id == data.tg_id))
 
         referrer_id = None
@@ -136,6 +136,26 @@ async def vpn_status(tg_id: int):
     }
 
 
+# ==================================================================
+# PUBLIC
+@app.get("/api/vpn/servers")
+async def get_servers():
+    return await rq.get_servers()
+
+# получение тарифов сервера
+@app.get("/api/vpn/tariffs/{server_id}")
+async def get_tariffs(server_id: int):
+    try:
+        return await rq.get_server_tariffs(server_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# получение всех подписок пользователя
+@app.get("/api/vpn/my/{tg_id}")
+async def my_vpns(tg_id: int):
+    return await rq.get_my_vpns(tg_id)
+
+
 # === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =============================================
 
 @app.get("/api/payment/status/{payment_id}")
@@ -148,7 +168,7 @@ async def get_payment_status(payment_id: int):
         return {"status": payment.status}
 
 # ======================
-# API
+# Create Invoice
 class CreateInvoiceRequest(BaseModel):
     tg_id: int
     tariff_id: int
@@ -172,7 +192,6 @@ async def create_invoice(data: CreateInvoiceRequest):
         if not rate:
             raise HTTPException(status_code=400, detail="Exchange rate not set")
 
-        # 5) Расчёт Stars
         price_usdt = Decimal(tariff.price_tarif)
         rate_usdt = Decimal(rate.rate)
         stars_price = int(price_usdt / rate_usdt)
@@ -275,7 +294,7 @@ class WalletDepositRequest(BaseModel):
 
 @app.post("/api/wallet/deposit/stars")
 async def wallet_deposit_stars(data: WalletDepositRequest):
-    result = await wr.create_stars_deposit(data.tg_id,Decimal(data.amount_usdt))
+    result = await wrq.create_stars_deposit(data.tg_id,Decimal(data.amount_usdt))
 
     invoice_link = await bot(CreateInvoiceLink(
             title="Пополнение баланса",
@@ -296,12 +315,11 @@ async def wallet_deposit_stars(data: WalletDepositRequest):
 
 
 
-# --- Создание заказа Stars --- 
+# --- Создание заказа по Stars --- 
 class OrderRequest(BaseModel):
     tg_id: int
     server_id: int
     tariff_id: int
-
 
 @app.post("/api/vpn/order")
 async def create_order_endpoint(data: OrderRequest):
@@ -321,7 +339,7 @@ async def create_order_endpoint(data: OrderRequest):
 
         amount_stars = int(tariff.price_tarif / rate.rate)
 
-        return await rq.create_order(user.idUser, data.server_id, data.tariff_id, Decimal(amount_stars), currency="XTR")
+        return await berq.create_order(user.idUser, data.server_id, data.tariff_id, Decimal(amount_stars), currency="XTR")
 
 
 # TELEGRAM HANDLERS
@@ -357,7 +375,7 @@ async def successful_payment(message: Message):
             )
             session.add(payment)
 
-            await wr.complete_wallet_deposit(session, op.id)
+            await wrq.complete_wallet_deposit(session, op.id)
             await session.commit()
 
         await message.answer("✅ Баланс успешно пополнен!")
@@ -390,14 +408,14 @@ async def successful_payment(message: Message):
 
         try:
             if order.purpose_order == "buy":
-                vpn_data = await create_vpn_xui(
+                vpn_data = await berq.create_vpn_xui(
                     order.idUser,
                     order.server_id,
                     tariff.days
                 )
 
             elif order.purpose_order == "extension":
-                vpn_data = await pay_and_extend_vpn(
+                vpn_data = await berq.pay_and_extend_vpn(
                     subscription_id=order.subscription_id,
                     tariff_id=order.idTarif
                 )
@@ -411,7 +429,7 @@ async def successful_payment(message: Message):
             return
 
         order.status = "completed"
-        await process_referral_reward(session, order)
+        await rq.process_referral_reward(session, order)
         await session.commit()
 
         if order.purpose_order == "buy":
@@ -435,7 +453,7 @@ async def successful_payment(message: Message):
 
 
 
-# -------- КРИПТА x Cryptobot
+# ================ КРИПТА x Cryptobot
 class CryptoInvoiceRequest(BaseModel):
     tg_id: int
     tariff_id: int
@@ -461,7 +479,7 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
         session.add(order)
         await session.flush()
 
-        # 2️⃣ Создаём инвойс CryptoBot
+        # Создаём инвойс CryptoBot
         invoice = await crypto.create_invoice(
             asset="USDT",
             amount=float(tariff.price_tarif),
@@ -539,7 +557,7 @@ async def renew_crypto_invoice(data: RenewCryptoInvoiceRequest):
 # ---- ПОПОПЛЛНЕНИЕ cryptobot
 @app.post("/api/wallet/deposit/crypto")
 async def wallet_deposit_crypto(data: WalletDepositRequest):
-    result = await wr.create_crypto_deposit(
+    result = await wrq.create_crypto_deposit(
         data.tg_id,
         Decimal(data.amount_usdt)
     )
@@ -567,7 +585,6 @@ async def wallet_deposit_crypto(data: WalletDepositRequest):
     }
 
 
-
 # ---- Webhoock от Cryptobot
 @app.post("/api/crypto/webhook")
 async def crypto_webhook(data: dict):
@@ -588,11 +605,7 @@ async def crypto_webhook(data: dict):
         return {"ok": True}
 
     async with async_session() as session:
-        payment = await session.scalar(select(Payment).where(
-                Payment.provider == "cryptobot",
-                Payment.provider_payment_id == invoice_id
-            )
-        )
+        payment = await session.scalar(select(Payment).where(Payment.provider == "cryptobot",Payment.provider_payment_id == invoice_id))
         if not payment or payment.status == "paid":
             return {"ok": True}
 
@@ -606,11 +619,9 @@ async def crypto_webhook(data: dict):
             
             user = await session.get(User, op.idUser)
 
-            await wr.complete_wallet_deposit(session, op.id)
+            await wrq.complete_wallet_deposit(session, op.id)
             await session.commit()
-            await bot.send_message(
-                chat_id=user.tg_id,
-                text=("✅ Баланс успешно пополнен!"))
+            await bot.send_message(chat_id=user.tg_id,text=("✅ Баланс успешно пополнен!"))
             
             return {"ok": True}
         
@@ -627,7 +638,7 @@ async def crypto_webhook(data: dict):
             user = await session.get(User, order.idUser)
 
             try:
-                vpn_data = await pay_and_extend_vpn(
+                vpn_data = await berq.pay_and_extend_vpn(
                     subscription_id=order.subscription_id,
                     tariff_id=order.idTarif
                 )
@@ -637,7 +648,7 @@ async def crypto_webhook(data: dict):
                 return {"ok": True}
 
             order.status = "completed"
-            await process_referral_reward(session, order)
+            await rq.process_referral_reward(session, order)
             await session.commit()
 
             await bot.send_message(
@@ -652,7 +663,6 @@ async def crypto_webhook(data: dict):
 
             return {"ok": True}
 
-
         # ===== ПОКУПКА VPN =====
         if prefix == "buy":
             order = await session.get(Order, entity_id)
@@ -666,14 +676,14 @@ async def crypto_webhook(data: dict):
             user = await session.get(User, order.idUser)
 
             try:
-                vpn_data = await create_vpn_xui(order.idUser, order.server_id, tariff.days)
+                vpn_data = await berq.create_vpn_xui(order.idUser, order.server_id, tariff.days)
             except Exception:
                 order.status = "failed"
                 await session.commit()
                 return {"ok": True}
 
             order.status = "completed"
-            await process_referral_reward(session, order)
+            await rq.process_referral_reward(session, order)
             await session.commit()
 
             await bot.send_message(
@@ -730,23 +740,7 @@ async def get_xtr_rate():
 
 
 
-# ==================================================================
-# PUBLIC
-@app.get("/api/vpn/servers")
-async def get_servers():
-    return await rq.get_servers()
 
-@app.get("/api/vpn/my/{tg_id}")
-async def my_vpns(tg_id: int):
-    return await rq.get_my_vpns(tg_id)
-
-# получение тарифов сервера
-@app.get("/api/vpn/tariffs/{server_id}")
-async def get_tariffs(server_id: int):
-    try:
-        return await rq.get_server_tariffs(server_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ======================
@@ -762,7 +756,6 @@ async def get_referrals_count(
     count = await rq.get_referrals_count(tg_id)
     return {"count": count}
 
-
 @app.get("/api/admin/referrals/{tg_id}")
 async def get_referrals(
     tg_id: int = Path(..., description="TG ID пользователя")
@@ -771,7 +764,7 @@ async def get_referrals(
 
 
 # ======================
-# TASKS
+# TASKS x Rewards
 @app.get("/api/tasks/{tg_id}")
 async def get_tasks(tg_id: int):
     async with async_session() as session:
@@ -785,18 +778,18 @@ async def get_tasks(tg_id: int):
                 **task,
                 "completed": task["key"] in completed_keys
             }
-            for task in TASKS
+            for task in taskrq.TASKS
         ]
 
 
 @app.post("/api/tasks/check/{task_key}")
 async def check_task(task_key: str, tg_id: int):
-    task = next(t for t in TASKS if t["key"] == task_key)
+    task = next(t for t in taskrq.TASKS if t["key"] == task_key)
 
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
 
-    return await check_and_complete_task(user, task)
+    return await taskrq.check_and_complete_task(user, task)
 
 
 @app.get("/api/rewards/{tg_id}")
@@ -845,7 +838,7 @@ async def activate_reward_api(tg_id: int, reward_id: int, server_id: int):
         if not user:
             raise HTTPException(404, "User not found")
 
-    await activate_reward(user.idUser, reward_id, server_id)
+    await taskrq.activate_reward(user.idUser, reward_id, server_id)
 
     return {"status": "ok"}
 

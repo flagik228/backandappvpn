@@ -421,9 +421,7 @@ async def admin_get_exchange_rate(pair: str):
 
 async def admin_set_exchange_rate(pair: str, rate_value: Decimal):
     async with async_session() as session:
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == pair)
-        )
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == pair))
 
         if rate:
             rate.rate = rate_value

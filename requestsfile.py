@@ -20,7 +20,6 @@ async def add_user(tg_id: int, user_role: str = "user", referrer_id: int | None 
         user = User(tg_id=tg_id,userRole=user_role,referrer_id=referrer_id)
         session.add(user)
         await session.flush()
-
         wallet = UserWallet(idUser=user.idUser, balance_usdt=Decimal("0.00"))
         session.add(wallet)
         await session.commit()
@@ -40,7 +39,6 @@ async def get_user_wallet(tg_id: int):
     
 # =======================
 # --- SERVERS ---
-# =======================
 async def get_servers() -> List[dict]:
     async with async_session() as session:
         servers = await session.scalars(select(ServersVPN).where(ServersVPN.is_active == True))
@@ -80,9 +78,7 @@ async def get_servers_full():
         result = []
         for s in servers:
             # Получаем тарифы
-            tariffs_rows = await session.scalars(
-                select(Tariff).where(Tariff.server_id == s.idServerVPN, Tariff.is_active == True)
-            )
+            tariffs_rows = await session.scalars(select(Tariff).where(Tariff.server_id == s.idServerVPN, Tariff.is_active == True))
             tariffs_list = []
             for t in tariffs_rows:
                 tariffs_list.append({
@@ -106,9 +102,18 @@ async def get_servers_full():
         return result
 
 
+# =======================
+# --- GET TARIFFS ---
+async def get_server_tariffs(server_id: int):
+    async with async_session() as session:
+        tariffs = await session.scalars(select(Tariff).where(Tariff.server_id == server_id, Tariff.is_active == True))
+        return [{"idTarif": t.idTarif,"days": t.days,"price_usdt": str(t.price_tarif)
+        } for t in tariffs]
+
+
+# изменение now_conn сервера
 async def recalc_server_load(session, server_id: int):
     server = await session.get(ServersVPN, server_id)
-
     active_count = await session.scalar(select(func.count()).select_from(VPNSubscription).where(
             VPNSubscription.idServerVPN == server_id,
             VPNSubscription.is_active == True,
@@ -118,223 +123,12 @@ async def recalc_server_load(session, server_id: int):
     server.now_conn = active_count
     server.is_active = active_count < server.max_conn
 
-
-
-# =====================================================================
-# --- СОЗДАНИЕ ЗАКАЗА ---    
-async def create_order(user_id: int,server_id: int,tariff_id: int,amount_usdt: Decimal,purpose_order: str = "buy",currency: str = "XTR"):
-    async with async_session() as session:
-        order = Order(
-            idUser=user_id,
-            server_id=server_id,
-            idTarif=tariff_id,
-            purpose_order=purpose_order,
-            amount=int(amount_usdt),
-            currency=currency,
-            status="pending"
-        )
-        session.add(order)
-        await session.commit()
-        await session.refresh(order)
-        return {
-            "order_id": order.id,
-            "amount": str(amount_usdt),
-            "currency": currency,
-            "idTarif": tariff_id
-        }
         
 # форматирование даты 2026-01-04 22:46
 def format_datetime_ru(dt: datetime) -> str:
     if dt.tzinfo:
         dt = dt.astimezone(timezone.utc)
     return dt.strftime("%d.%m.%Y %H:%M")
-
-
-# --- Генерация уникального email для клиента <COUNTRY>-<TGID>-<N>@artcry
-async def generate_unique_client_email(session,user_id: int,server: ServersVPN,xui: XUIApi) -> str:
-
-    country = await session.get(CountriesVPN, server.idCountry)
-    country_code = country.nameCountry.upper()[:3]
-
-    inbound = await xui.get_inbound_by_port(server.inbound_port)
-    if not inbound:
-        raise Exception("Inbound not found")
-
-    # считаем клиентов в XUI
-    existing = inbound.settings.clients or []
-
-    prefix = f"{country_code}-{user_id}-"
-    nums = []
-
-    for c in existing:
-        if c.email.startswith(prefix):
-            try:
-                nums.append(int(c.email.split("-")[-1].split("@")[0]))
-            except:
-                pass
-
-    next_num = max(nums) + 1 if nums else 1
-
-    return f"{prefix}{next_num}@artcry"
-
-
-# =====================================================================
-# --- СОЗДАНИЕ КЛЮЧА, УСПЕШНАЯ ОПЛАТА
-# =====================================================================
-
-async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
-    async with async_session() as session:
-        user = await session.get(User, user_id)
-        server = await session.get(ServersVPN, server_id)
-
-        if not user or not server:
-            raise Exception("User or server not found")
-
-        # 🔑 сначала создаём XUI API
-        xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
-
-        # 👉 потом генерируем email
-        client_email = await generate_unique_client_email(session, user_id, server, xui)
-
-        inbound = await xui.get_inbound_by_port(server.inbound_port)
-        if not inbound:
-            raise Exception("Inbound not found")
-
-        # 🔥 создаём клиента
-        client = await xui.add_client(
-            inbound_id=inbound.id,
-            email=client_email,
-            days=tariff_days
-        )
-
-        uuid = client["uuid"]
-
-        # 🔍 получаем Reality настройки
-        stream = inbound.stream_settings
-        reality = stream.reality_settings
-
-        public_key = reality["settings"]["publicKey"]
-        server_name = reality["serverNames"][0]
-        short_id = reality["shortIds"][0]
-
-        query = {
-            "type": stream.network,
-            "security": stream.security,
-            "pbk": public_key,
-            "fp": "chrome",
-            "sni": server_name,
-            "sid": short_id,
-        }
-
-        query_str = "&".join(f"{k}={quote(str(v))}" for k, v in query.items())
-
-        access_link = (
-            f"vless://{uuid}@{server.server_ip}:{server.inbound_port}"
-            f"?{query_str}#{client_email}"
-        )
-
-        now = datetime.utcnow()
-        expires_at = now + timedelta(days=tariff_days)
-
-        subscription = VPNSubscription(
-            idUser=user_id,
-            idServerVPN=server_id,
-            provider="xui",
-            provider_client_email=client_email,
-            provider_client_uuid=uuid,
-            access_data=access_link,
-            created_at=now,
-            expires_at=expires_at,
-            is_active=True,
-            status="active"
-        )
-
-        session.add(subscription)
-        await recalc_server_load(session, server_id)
-        await session.commit()
-
-        return {
-            "subscription_id": subscription.id,
-            "access_data": access_link,
-            "expires_at": expires_at.isoformat(), # для API / логики
-            "expires_at_human": format_datetime_ru(expires_at) # для человека
-        }
-        
-        
-# --- ОПЛАТА И ПРОДЛЕНИЕ --- 
-async def pay_and_extend_vpn(subscription_id: int, tariff_id: int):
-    async with async_session() as session:
-        tariff = await session.get(Tariff, tariff_id)
-        if not tariff:
-            raise ValueError("Tariff not found")
-
-        sub = await session.get(VPNSubscription, subscription_id)
-
-        if not sub:
-            raise ValueError("Subscription not found")
-
-        server = await session.get(ServersVPN, sub.idServerVPN)
-        xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
-
-        inbound = await xui.get_inbound_by_port(server.inbound_port)
-        if not inbound:
-            raise Exception("Inbound not found")
-
-        # 🔥 ПРОДЛЯЕМ В XUI
-        await xui.extend_client(
-            inbound_id=inbound.id,
-            client_email=sub.provider_client_email,
-            days=tariff.days)
-
-        now = datetime.now(timezone.utc)
-
-        if sub.expires_at and sub.expires_at > now:
-            sub.expires_at += timedelta(days=tariff.days)
-        else:
-            sub.expires_at = now + timedelta(days=tariff.days)
-
-        sub.is_active = True
-        sub.status = "active"
-        await recalc_server_load(session, sub.idServerVPN)
-        await session.commit()
-
-        return {
-            "subscription_id": sub.id,
-            "access_data": sub.access_data,
-            "days_added": tariff.days,
-            "expires_at": sub.expires_at.isoformat(),
-            "expires_at_human": format_datetime_ru(sub.expires_at)
-        }
-
-
-# =======================
-# --- УДАЛЕНИЕ КЛЮЧА
-async def remove_vpn_xui(subscription: VPNSubscription):
-    async with async_session() as session:
-        server = await session.get(ServersVPN, subscription.idServerVPN)
-        if not server:
-            raise Exception("Сервер не найден")
-
-        xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
-        inbound = await xui.get_inbound_by_port(server.inbound_port)
-        if not inbound:
-            raise Exception("Inbound не найден")
-
-        inbound_id = inbound.id
-
-        try:
-            await xui.remove_client(
-            inbound_id=inbound_id,
-            email=subscription.provider_client_email
-        )
-        except Exception as e:
-            raise Exception(f"Не удалось удалить клиента на XUI: {e}")
-
-
-        # Деактивируем ключ в БД
-        subscription.is_active = False
-        subscription.status = "expired"
-        await session.commit()
 
 
 # =======================
@@ -346,7 +140,6 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
             return []
 
         now = datetime.now(timezone.utc)
-
         rows = await session.execute(select(VPNSubscription, ServersVPN)
             .join(ServersVPN, VPNSubscription.idServerVPN == ServersVPN.idServerVPN)
             .where(VPNSubscription.idUser == user.idUser)
@@ -368,16 +161,6 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
 
         return result
 
-    
-
-# =======================
-# --- GET TARIFFS ---
-async def get_server_tariffs(server_id: int):
-    async with async_session() as session:
-        tariffs = await session.scalars(select(Tariff).where(Tariff.server_id == server_id, Tariff.is_active == True))
-        return [{"idTarif": t.idTarif,"days": t.days,"price_usdt": str(t.price_tarif)
-        } for t in tariffs]
-
 
 #статус подписки в профиле
 async def has_active_subscription(tg_id: int) -> bool:
@@ -394,6 +177,32 @@ async def has_active_subscription(tg_id: int) -> bool:
         )
 
         return bool(await session.scalar(q))
+
+
+# --- Генерация уникального email для клиента <COUNTRY>-<TGID>-<N>@artcry
+async def generate_unique_client_email(session,user_id: int,server: ServersVPN,xui: XUIApi) -> str:
+    country = await session.get(CountriesVPN, server.idCountry)
+    country_code = country.nameCountry.upper()[:3]
+
+    inbound = await xui.get_inbound_by_port(server.inbound_port)
+    if not inbound:
+        raise Exception("Inbound not found")
+
+    # считаем клиентов в XUI
+    existing = inbound.settings.clients or []
+
+    prefix = f"{country_code}-{user_id}-"
+    nums = []
+    for c in existing:
+        if c.email.startswith(prefix):
+            try:
+                nums.append(int(c.email.split("-")[-1].split("@")[0]))
+            except:
+                pass
+
+    next_num = max(nums) + 1 if nums else 1
+
+    return f"{prefix}{next_num}@artcry"
 
 
 # =======================
@@ -421,12 +230,8 @@ async def get_referrals_list(tg_id: int):
                 ReferralUser.tg_username,
                 func.coalesce(func.sum(ReferralEarning.amount_usdt), 0)
             )
-            .outerjoin(Order,Order.idUser == ReferralUser.idUser
-            )
-            .outerjoin(
-                ReferralEarning,
-                ReferralEarning.order_id == Order.id
-            )
+            .outerjoin(Order,Order.idUser == ReferralUser.idUser)
+            .outerjoin(ReferralEarning, ReferralEarning.order_id == Order.id)
             .where(ReferralUser.referrer_id == referrer.idUser)
             .group_by(ReferralUser.idUser, ReferralUser.tg_username)
             .order_by(ReferralUser.created_at.desc())
@@ -451,7 +256,6 @@ async def process_referral_reward(session, order: Order):
         return
 
     percent = config.percent
-
     base_usdt = Decimal(tariff.price_tarif) # 🔥 ВСЕГДА считаем от USDT-цены тарифа
     reward_usdt = (base_usdt * Decimal(percent) / Decimal(100)).quantize(Decimal("0.000001"))
 
@@ -460,7 +264,6 @@ async def process_referral_reward(session, order: Order):
         return
 
     wallet.balance_usdt += reward_usdt
-
     earning = ReferralEarning(referrer_id=user.referrer_id,order_id=order.id,percent=percent,amount_usdt=reward_usdt)
     session.add(earning)
 

@@ -20,8 +20,7 @@ async def update_vpn_subscription_statuses():
     now = datetime.now(timezone.utc)
 
     async with async_session() as session:
-        result = await session.scalars(
-            select(VPNSubscription)
+        result = await session.scalars(select(VPNSubscription)
             .where(
                 VPNSubscription.is_active == True,
                 VPNSubscription.expires_at < now
@@ -36,7 +35,6 @@ async def update_vpn_subscription_statuses():
 
         for sub in expired_subs:
             print(f"⛔ Marking subscription {sub.id} as expired")
-
             sub.is_active = False
             sub.status = "expired"
 

@@ -15,13 +15,9 @@ async def get_user_wallet(tg_id: int):
         if not user:
             return None
 
-        wallet = await session.scalar(
-            select(UserWallet).where(UserWallet.idUser == user.idUser)
-        )
+        wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.idUser))
 
-        return {
-            "balance_usdt": str(wallet.balance_usdt)
-        }
+        return {"balance_usdt": str(wallet.balance_usdt)}
 
 
 # =========================
@@ -32,9 +28,7 @@ async def create_stars_deposit(tg_id: int, amount_usdt: Decimal):
         if not user:
             raise Exception("User not found")
 
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT")
-        )
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         if not rate:
             raise Exception("Exchange rate not set")
 
@@ -53,10 +47,7 @@ async def create_stars_deposit(tg_id: int, amount_usdt: Decimal):
         await session.flush()
         await session.commit()
 
-        return {
-            "wallet_operation_id": op.id,
-            "stars_amount": stars_amount
-        }
+        return {"wallet_operation_id": op.id,"stars_amount": stars_amount}
 
 
 # =========================
@@ -81,10 +72,7 @@ async def create_crypto_deposit(tg_id: int, amount_usdt: Decimal):
         await session.flush()
         await session.commit()
 
-        return {
-            "wallet_operation_id": op.id,
-            "amount_usdt": str(amount_usdt)
-        }
+        return {"wallet_operation_id": op.id,"amount_usdt": str(amount_usdt)}
 
 
 # =========================
