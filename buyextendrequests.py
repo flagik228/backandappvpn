@@ -3,10 +3,9 @@ from models import (async_session, User, UserWallet, WalletTransaction, VPNSubsc
 from typing import List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from sqlalchemy import select, func, exists, update, delete
-from sqlalchemy.orm import aliased
 from urllib.parse import quote
 from xui_api import XUIApi
+from sqlalchemy import select
 import requestsfile as rq
 
 
@@ -173,3 +172,85 @@ async def remove_vpn_xui(subscription: VPNSubscription):
         subscription.is_active = False
         subscription.status = "expired"
         await session.commit()
+
+
+# =====================================================================
+# --- ПОКУПКА VPN С БАЛАНСА ---
+# =====================================================================
+async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise Exception("User not found")
+
+        tariff = await session.get(Tariff, tariff_id)
+        if not tariff or not tariff.is_active:
+            raise Exception("Tariff not found")
+
+        server = await session.get(ServersVPN, tariff.server_id)
+        if not server:
+            raise Exception("Server not found")
+
+        wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.idUser))
+        if not wallet:
+            raise Exception("Wallet not found")
+
+        price = Decimal(tariff.price_tarif)
+
+        # ❌ НЕ ХВАТАЕТ ДЕНЕГ
+        if wallet.balance_usdt < price:
+            raise Exception("NOT_ENOUGH_BALANCE")
+
+        # 1️⃣ Списываем баланс
+        wallet.balance_usdt -= price
+
+        tx = WalletTransaction(
+            wallet_id=wallet.id,
+            amount=-price,
+            type="withdrawal",
+            description=f"VPN purchase ({tariff.days} days)"
+        )
+        session.add(tx)
+
+        # 2️⃣ Создаём заказ
+        order = Order(
+            idUser=user.idUser,
+            server_id=server.idServerVPN,
+            idTarif=tariff.idTarif,
+            purpose_order="buy",
+            amount=price,
+            currency="USDT",
+            status="processing"
+        )
+        session.add(order)
+        await session.flush()
+
+        # 3️⃣ Платёж (внутренний)
+        payment = Payment(
+            order_id=order.id,
+            provider="balance",
+            provider_payment_id=f"balance_{order.id}",
+            status="paid"
+        )
+        session.add(payment)
+
+        # 4️⃣ Выдаём VPN
+        vpn_data = await create_vpn_xui(
+            user_id=user.idUser,
+            server_id=server.idServerVPN,
+            tariff_days=tariff.days
+        )
+
+        order.status = "completed"
+
+        # 5️⃣ Рефералка
+        await rq.process_referral_reward(session, order)
+
+        await session.commit()
+
+        return {
+            "order_id": order.id,
+            "access_data": vpn_data["access_data"],
+            "expires_at_human": vpn_data["expires_at_human"],
+            "server_name": server.nameVPN
+        }

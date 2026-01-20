@@ -701,6 +701,28 @@ async def crypto_webhook(data: dict):
     return {"ok": True}
 
 
+# ===== ОПЛАТА С БАЛАНСА =====
+class BuyFromBalanceRequest(BaseModel):
+    tg_id: int
+    tariff_id: int
+
+
+@app.post("/api/vpn/buy-from-balance")
+async def buy_from_balance(data: BuyFromBalanceRequest):
+    try:
+        result = await berq.buy_vpn_from_balance(
+            tg_id=data.tg_id,
+            tariff_id=data.tariff_id
+        )
+        return result
+
+    except Exception as e:
+        if str(e) == "NOT_ENOUGH_BALANCE":
+            raise HTTPException(status_code=400, detail="NOT_ENOUGH_BALANCE")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
 # Проверка успешного заказа после покупки
 @app.get("/api/order/status/{order_id}")
