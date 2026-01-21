@@ -758,11 +758,6 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
 @app.post("/api/yookassa/webhook")
 async def yookassa_webhook(request: Request):
     body = await request.body()
-    signature = request.headers.get("Content-Hmac-Sha256")
-
-    # ✅ проверка подписи
-    if not SecurityHelper.is_ip_trusted(request.client.host):
-        raise HTTPException(403, "Untrusted IP")
 
     notification = WebhookNotification(body)
     payment = notification.object
@@ -770,7 +765,7 @@ async def yookassa_webhook(request: Request):
     if notification.event != "payment.succeeded":
         return {"ok": True}
 
-    order_id = int(payment.metadata["order_id"])
+    order_id = int(payment.metadata.get("order_id"))
 
     async with async_session() as session:
         order = await session.get(Order, order_id)
@@ -779,10 +774,9 @@ async def yookassa_webhook(request: Request):
 
         order.status = "processing"
 
-        pay = await session.scalar(
-            select(Payment).where(Payment.provider == "yookassa",Payment.provider_payment_id == payment.id)
-        )
-        pay.status = "paid"
+        pay = await session.scalar(select(Payment).where(Payment.provider == "yookassa",Payment.provider_payment_id == payment.id))
+        if pay:
+            pay.status = "paid"
 
         tariff = await session.get(Tariff, order.idTarif)
         user = await session.get(User, order.idUser)
@@ -807,6 +801,7 @@ async def yookassa_webhook(request: Request):
         )
 
     return {"ok": True}
+
 
 
 
