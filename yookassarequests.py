@@ -25,7 +25,7 @@ async def create_yookassa_payment(
         "capture": True,
         "description": description,
         "metadata": {
-            "order_id": order_id
+            "order_id": str(order_id)
         }
     }, uuid.uuid4())
 

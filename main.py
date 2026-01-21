@@ -12,6 +12,9 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 from aiogram.filters import CommandStart
 
+from yookassa.domain.notification import WebhookNotification
+from yookassa.domain.common import SecurityHelper
+
 from models import init_db, async_session, UserStart, User, WalletOperation, WalletTransaction, UserTask, UserReward, ExchangeRate,Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
 import requestsfile as rq
 import buyextendrequests as berq
@@ -722,15 +725,13 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
         if not rate:
             raise HTTPException(500, "RUB rate not set")
 
-        price_rub = Decimal(tariff.price_tarif) * Decimal(rate.rate)
-
         order = Order(
             idUser=user.idUser,
             server_id=tariff.server_id,
             idTarif=tariff.idTarif,
             purpose_order="buy",
-            amount=price_rub,
-            currency="RUB",
+            amount=Decimal(tariff.price_tarif),
+            currency="USDT",
             status="pending"
         )
         session.add(order)
@@ -754,32 +755,36 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
 # юkassa webhoock
 @app.post("/api/yookassa/webhook")
 async def yookassa_webhook(request: Request):
-    data = await request.json()
+    body = await request.body()
+    signature = request.headers.get("Content-Hmac-Sha256")
 
-    event = data.get("event")
-    payment_data = data.get("object")
+    # ✅ проверка подписи
+    if not SecurityHelper.is_ip_trusted(request.client.host):
+        raise HTTPException(403, "Untrusted IP")
 
-    if event != "payment.succeeded":
+    notification = WebhookNotification(body)
+    payment = notification.object
+
+    if notification.event != "payment.succeeded":
         return {"ok": True}
 
-    order_id = payment_data["metadata"].get("order_id")
+    order_id = int(payment.metadata["order_id"])
 
     async with async_session() as session:
-        payment = await session.scalar(
-            select(Payment).where(
-                Payment.provider == "yookassa",
-                Payment.provider_payment_id == payment_data["id"]
-            )
-        )
-
-        if not payment or payment.status == "paid":
+        order = await session.get(Order, order_id)
+        if not order or order.status != "pending":
             return {"ok": True}
 
-        order = await session.get(Order, order_id)
         order.status = "processing"
-        payment.status = "paid"
+
+        pay = await session.scalar(
+            select(Payment).where(Payment.provider == "yookassa",Payment.provider_payment_id == payment.id)
+        )
+        pay.status = "paid"
 
         tariff = await session.get(Tariff, order.idTarif)
+        user = await session.get(User, order.idUser)
+        server = await session.get(ServersVPN, order.server_id)
 
         vpn_data = await berq.create_vpn_xui(order.idUser,order.server_id,tariff.days)
 
@@ -787,7 +792,20 @@ async def yookassa_webhook(request: Request):
         await rq.process_referral_reward(session, order)
         await session.commit()
 
+        await bot.send_message(
+            chat_id=user.tg_id,
+            text=(
+                f"✅ <b>VPN готов!</b>\n"
+                f"Сервер: {server.nameVPN}\n"
+                f"Действует до: {vpn_data['expires_at_human']}\n\n"
+                f"<b>Ваш ключ:</b>\n"
+                f"<code>{vpn_data['access_data']}</code>"
+            ),
+            parse_mode="HTML"
+        )
+
     return {"ok": True}
+
 
 
 
@@ -835,9 +853,7 @@ async def get_order_status(order_id: int):
         if not order:
             raise HTTPException(404, "Order not found")
 
-        return {
-            "status": order.status
-        }
+        return {"status": order.status}
 
 # Проверка успешной оплаты пополнения
 @app.get("/api/wallet/status/{operation_id}")
@@ -859,6 +875,15 @@ async def get_xtr_rate():
         if not rate:
             raise HTTPException(404, "Rate not set")
 
+        return {"rate": str(rate.rate)}
+
+
+@app.get("/api/rate/rub")
+async def get_rub_rate():
+    async with async_session() as session:
+        rate = await session.scalar(
+            select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT")
+        )
         return {"rate": str(rate.rate)}
 
 
