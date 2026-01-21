@@ -740,7 +740,7 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
         await session.flush()
 
         payment_id, confirmation_url = await ykrq.create_yookassa_payment(order.id,price_rub,
-            f"VPN {tariff.days} дней"
+            f"Buy VPN {tariff.days} дней, idUser: {user.idUser}"
         )
 
         payment = Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending")
@@ -771,15 +771,9 @@ async def yookassa_webhook(request: Request):
         order = await session.get(Order, order_id)
         if not order or order.status != "pending":
             return {"ok": True}
-
         order.status = "processing"
 
-        pay = await session.scalar(
-            select(Payment).where(
-                Payment.provider == "yookassa",
-                Payment.provider_payment_id == payment_obj.id
-            )
-        )
+        pay = await session.scalar(select(Payment).where(Payment.provider == "yookassa",Payment.provider_payment_id == payment_obj.id))
         if pay:
             pay.status = "paid"
 
@@ -802,16 +796,14 @@ async def yookassa_webhook(request: Request):
         await rq.process_referral_reward(session, order)
         await session.commit()
 
-        await bot.send_message(
-            chat_id=user.tg_id,
+        await bot.send_message(chat_id=user.tg_id,
             text=(
                 f"✅ <b>VPN готов!</b>\n"
                 f"Сервер: {server.nameVPN}\n"
                 f"Действует до: {vpn_data['expires_at_human']}\n\n"
                 f"<b>Ваш ключ:</b>\n"
                 f"<code>{vpn_data['access_data']}</code>"
-            ),
-            parse_mode="HTML"
+            ),parse_mode="HTML"
         )
 
     return {"ok": True}
