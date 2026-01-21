@@ -407,9 +407,7 @@ async def admin_delete_tariff(tariff_id: int):
 # =========================================================
 async def admin_get_exchange_rate(pair: str):
     async with async_session() as session:
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == pair)
-        )
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == pair))
         if not rate:
             return None
 
@@ -427,10 +425,7 @@ async def admin_set_exchange_rate(pair: str, rate_value: Decimal):
             rate.rate = rate_value
             rate.updated_at = datetime.utcnow()
         else:
-            rate = ExchangeRate(
-                pair=pair,
-                rate=rate_value
-            )
+            rate = ExchangeRate(pair=pair,rate=rate_value)
             session.add(rate)
 
         await session.commit()

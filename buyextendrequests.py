@@ -197,11 +197,10 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
 
         price = Decimal(tariff.price_tarif)
 
-        # ❌ НЕ ХВАТАЕТ ДЕНЕГ
+        # если НЕ ХВАТАЕТ ДЕНЕГ
         if wallet.balance_usdt < price:
             raise Exception("NOT_ENOUGH_BALANCE")
 
-        # 1️⃣ Списываем баланс
         wallet.balance_usdt -= price
 
         tx = WalletTransaction(
@@ -212,7 +211,6 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
         )
         session.add(tx)
 
-        # 2️⃣ Создаём заказ
         order = Order(
             idUser=user.idUser,
             server_id=server.idServerVPN,
@@ -225,7 +223,6 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
         session.add(order)
         await session.flush()
 
-        # 3️⃣ Платёж (внутренний)
         payment = Payment(
             order_id=order.id,
             provider="balance",
@@ -234,16 +231,13 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
         )
         session.add(payment)
 
-        # 4️⃣ Выдаём VPN
         vpn_data = await create_vpn_xui(
             user_id=user.idUser,
             server_id=server.idServerVPN,
             tariff_days=tariff.days
         )
-
         order.status = "completed"
 
-        # 5️⃣ Рефералка
         await rq.process_referral_reward(session, order)
 
         await session.commit()

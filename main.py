@@ -15,6 +15,7 @@ from aiogram.filters import CommandStart
 from models import init_db, async_session, UserStart, User, WalletOperation, WalletTransaction, UserTask, UserReward, ExchangeRate,Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
 import requestsfile as rq
 import buyextendrequests as berq
+import yookassarequests as ykrq
 import walletrequests as wrq
 import tasksrequests as taskrq
 import adminrequests as rqadm
@@ -701,6 +702,97 @@ async def crypto_webhook(data: dict):
     return {"ok": True}
 
 
+
+# ===== ЮKASSA ОПЛАТА =====
+class YooKassaInvoiceRequest(BaseModel):
+    tg_id: int
+    tariff_id: int
+
+
+@app.post("/api/vpn/yookassa-invoice")
+async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        tariff = await session.get(Tariff, data.tariff_id)
+
+        if not user or not tariff or not tariff.is_active:
+            raise HTTPException(404, "Invalid user or tariff")
+
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT"))
+        if not rate:
+            raise HTTPException(500, "RUB rate not set")
+
+        price_rub = Decimal(tariff.price_tarif) * Decimal(rate.rate)
+
+        order = Order(
+            idUser=user.idUser,
+            server_id=tariff.server_id,
+            idTarif=tariff.idTarif,
+            purpose_order="buy",
+            amount=price_rub,
+            currency="RUB",
+            status="pending"
+        )
+        session.add(order)
+        await session.flush()
+
+        payment_id, confirmation_url = await ykrq.create_yookassa_payment(order.id,price_rub,
+            f"VPN {tariff.days} дней"
+        )
+
+        payment = Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending")
+        session.add(payment)
+        await session.commit()
+
+        return {
+            "confirmation_url": confirmation_url,
+            "order_id": order.id,
+            "amount_rub": str(price_rub)
+        }
+
+
+# юkassa webhoock
+@app.post("/api/yookassa/webhook")
+async def yookassa_webhook(request: Request):
+    data = await request.json()
+
+    event = data.get("event")
+    payment_data = data.get("object")
+
+    if event != "payment.succeeded":
+        return {"ok": True}
+
+    order_id = payment_data["metadata"].get("order_id")
+
+    async with async_session() as session:
+        payment = await session.scalar(
+            select(Payment).where(
+                Payment.provider == "yookassa",
+                Payment.provider_payment_id == payment_data["id"]
+            )
+        )
+
+        if not payment or payment.status == "paid":
+            return {"ok": True}
+
+        order = await session.get(Order, order_id)
+        order.status = "processing"
+        payment.status = "paid"
+
+        tariff = await session.get(Tariff, order.idTarif)
+
+        vpn_data = await berq.create_vpn_xui(order.idUser,order.server_id,tariff.days)
+
+        order.status = "completed"
+        await rq.process_referral_reward(session, order)
+        await session.commit()
+
+    return {"ok": True}
+
+
+
+
+
 # ===== ОПЛАТА С БАЛАНСА =====
 class BuyFromBalanceRequest(BaseModel):
     tg_id: int
@@ -768,12 +860,6 @@ async def get_xtr_rate():
             raise HTTPException(404, "Rate not set")
 
         return {"rate": str(rate.rate)}
-
-
-
-
-
-
 
 
 # ======================
