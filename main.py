@@ -12,7 +12,7 @@ from aiogram.types import Update, PreCheckoutQuery, Message, LabeledPrice
 from aiogram.methods import CreateInvoiceLink
 from aiogram.filters import CommandStart
 
-from yookassa.domain.notification import WebhookNotification
+from yookassa.domain.notification import WebhookNotification, WebhookNotificationFactory
 from yookassa.domain.common import SecurityHelper
 
 from models import init_db, async_session, UserStart, User, WalletOperation, WalletTransaction, UserTask, UserReward, ExchangeRate,Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
@@ -757,15 +757,15 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
 # юkassa webhoock
 @app.post("/api/yookassa/webhook")
 async def yookassa_webhook(request: Request):
-    body = await request.body()
+    data = await request.json()  # ✅ ВАЖНО: json, а не body()
 
-    notification = WebhookNotification(body)
-    payment = notification.object
+    notification = WebhookNotificationFactory().create(data)
 
     if notification.event != "payment.succeeded":
         return {"ok": True}
 
-    order_id = int(payment.metadata.get("order_id"))
+    payment_obj = notification.object
+    order_id = int(payment_obj.metadata["order_id"])
 
     async with async_session() as session:
         order = await session.get(Order, order_id)
@@ -774,7 +774,12 @@ async def yookassa_webhook(request: Request):
 
         order.status = "processing"
 
-        pay = await session.scalar(select(Payment).where(Payment.provider == "yookassa",Payment.provider_payment_id == payment.id))
+        pay = await session.scalar(
+            select(Payment).where(
+                Payment.provider == "yookassa",
+                Payment.provider_payment_id == payment_obj.id
+            )
+        )
         if pay:
             pay.status = "paid"
 
@@ -782,7 +787,16 @@ async def yookassa_webhook(request: Request):
         user = await session.get(User, order.idUser)
         server = await session.get(ServersVPN, order.server_id)
 
-        vpn_data = await berq.create_vpn_xui(order.idUser,order.server_id,tariff.days)
+        try:
+            vpn_data = await berq.create_vpn_xui(
+                order.idUser,
+                order.server_id,
+                tariff.days
+            )
+        except Exception:
+            order.status = "failed"
+            await session.commit()
+            return {"ok": True}
 
         order.status = "completed"
         await rq.process_referral_reward(session, order)
@@ -801,6 +815,7 @@ async def yookassa_webhook(request: Request):
         )
 
     return {"ok": True}
+
 
 
 
