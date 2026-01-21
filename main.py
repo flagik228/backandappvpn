@@ -725,6 +725,8 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
         if not rate:
             raise HTTPException(500, "RUB rate not set")
 
+        price_rub = Decimal(tariff.price_tarif) * Decimal(rate.rate)
+
         order = Order(
             idUser=user.idUser,
             server_id=tariff.server_id,
