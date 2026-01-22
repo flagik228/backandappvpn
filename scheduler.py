@@ -4,7 +4,7 @@ from sqlalchemy import select
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from models import async_session, VPNSubscription, Order, User
-from main import bot
+from bot_instance import bot
 
 
 """Находит активные VPN-подписки с истёкшим expires_at, помечает их как:
