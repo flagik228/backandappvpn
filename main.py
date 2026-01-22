@@ -17,7 +17,6 @@ from aiogram.filters import CommandStart
 from yookassa.domain.notification import WebhookNotification, WebhookNotificationFactory
 from yookassa.domain.common import SecurityHelper
 
-from bot_instance import bot
 from models import init_db, async_session, UserStart, User, WalletOperation, WalletTransaction, UserTask, UserReward, ExchangeRate,Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
 import requestsfile as rq
 import buyextendrequests as berq
@@ -29,7 +28,10 @@ from cryptopay_client import crypto
 from scheduler import start_scheduler
 
 
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_PATH = "/webhook"
+
+bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
 
