@@ -172,8 +172,10 @@ class Order(Base):
     purpose_order: Mapped[str] = mapped_column(String(100)) # "buy" при покупке и "extension" при продлении
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 6))
     currency: Mapped[str] = mapped_column(String(100))  # XTR / USDT
+    provider: Mapped[str] = mapped_column(String(50), default="unknown")  # stars / cryptobot / yookassa / balance
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending / paid / failed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
     # оплата заказа

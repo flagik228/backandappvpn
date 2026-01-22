@@ -43,7 +43,6 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         if not user or not server:
             raise Exception("User or server not found")
 
-        # создаём XUI API
         xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
         client_email = await rq.generate_unique_client_email(session, user_id, server, xui)
 
@@ -54,10 +53,9 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         client = await xui.add_client(inbound_id=inbound.id,email=client_email,days=tariff_days)
         uuid = client["uuid"]
 
-        # 🔍 получаем Reality настройки
+        # получаем Reality настройки
         stream = inbound.stream_settings
         reality = stream.reality_settings
-
         public_key = reality["settings"]["publicKey"]
         server_name = reality["serverNames"][0]
         short_id = reality["shortIds"][0]

@@ -1,10 +1,10 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from fastapi import FastAPI, HTTPException, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, and_, or_
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 import os
@@ -118,7 +118,6 @@ async def register_user(data: RegisterUser):
 
         session.add(UserWallet(idUser=user.idUser))
 
-        # удаляем временную запись
         if start:
             await session.delete(start)
 
@@ -133,6 +132,76 @@ async def get_wallet(tg_id: int):
     if not wallet:
         raise HTTPException(404, "Wallet not found")
     return wallet
+
+
+ORDER_ACTIVE_STATUSES = ("pending", "processing")
+ORDER_TTL_MINUTES = 10
+
+async def get_active_order_for_user(session, user_id: int):
+    now = datetime.now(timezone.utc)
+
+    q = (select(Order)
+        .where(Order.idUser == user_id,Order.status.in_(ORDER_ACTIVE_STATUSES)
+        ).order_by(Order.created_at.desc())
+    )
+    order = await session.scalar(q)
+
+    # Если заказ есть, но он уже протух — сразу помечаем expired
+    if order and order.expires_at and order.expires_at < now and order.status == "pending":
+        order.status = "expired"
+        await session.commit()
+        return None
+
+    return order
+
+
+# проверка активного заказа
+@app.get("/api/order/active/{tg_id}")
+async def get_active_order(tg_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            return {"active": False}
+
+        order = await get_active_order_for_user(session, user.idUser)
+        if not order:
+            return {"active": False}
+
+        # найдём payment чтобы вернуть ссылку (если есть)
+        payment = await session.scalar(select(Payment).where(Payment.order_id == order.id).order_by(Payment.id.desc()))
+
+        return {
+            "active": True,
+            "order": {
+                "id": order.id,
+                "status": order.status,
+                "provider": order.provider,
+                "purpose": order.purpose_order,
+                "created_at": order.created_at.isoformat(),
+                "expires_at": order.expires_at.isoformat() if order.expires_at else None,
+                "payment_id": payment.id if payment else None,
+                "provider_payment_id": payment.provider_payment_id if payment else None
+            }
+        }
+
+
+@app.post("/api/order/cancel/{order_id}")
+async def cancel_order(order_id: int):
+    async with async_session() as session:
+        order = await session.get(Order, order_id)
+        if not order:
+            raise HTTPException(404, "ORDER_NOT_FOUND")
+
+        # можно отменять только pending
+        if order.status != "pending":
+            raise HTTPException(400, "ORDER_CANT_CANCEL")
+
+        order.status = "cancelled"
+        await session.commit()
+
+        return {"ok": True, "status": "cancelled"}
+
+
 
 @app.get("/api/vpn/status/{tg_id}")
 async def vpn_status(tg_id: int):
@@ -185,6 +254,18 @@ async def create_invoice(data: CreateInvoiceRequest):
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
+        
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "ACTIVE_ORDER_EXISTS",
+                    "order_id": active.id,
+                    "status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
+                }
+            )
 
         tariff = await session.scalar(select(Tariff).where(Tariff.idTarif == data.tariff_id))
         if not tariff or not tariff.is_active:
@@ -212,7 +293,9 @@ async def create_invoice(data: CreateInvoiceRequest):
             purpose_order="buy",
             amount=price_usdt,
             currency="USDT",
-            status="pending"
+            provider="stars",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
         )
         session.add(order)
         await session.flush()
@@ -257,6 +340,17 @@ async def renew_invoice(data: RenewInvoiceRequest):
         rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         if not rate:
             raise HTTPException(500, "Exchange rate not set")
+        
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,
+                detail={
+                    "error": "ACTIVE_ORDER_EXISTS",
+                    "order_id": active.id,
+                    "status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
+                }
+            )
 
         price_usdt = Decimal(tariff.price_tarif)
         stars_price = int(Decimal(tariff.price_tarif) / rate.rate)
@@ -271,7 +365,9 @@ async def renew_invoice(data: RenewInvoiceRequest):
             purpose_order="extension",
             amount=price_usdt,
             currency="USDT",
-            status="pending"
+            provider="stars",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
         )
 
         session.add(order)
@@ -469,6 +565,17 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         tariff = await session.get(Tariff, data.tariff_id)
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "ACTIVE_ORDER_EXISTS",
+                    "order_id": active.id,
+                    "status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
+                }
+            )
 
         if not user or not tariff or not tariff.is_active:
             raise HTTPException(404, "Invalid user or tariff")
@@ -480,7 +587,9 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
             purpose_order="buy",
             amount=Decimal(tariff.price_tarif),
             currency="USDT",
-            status="pending"
+            provider="cryptobot",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
         )
         session.add(order)
         await session.flush()
@@ -525,6 +634,17 @@ async def renew_crypto_invoice(data: RenewCryptoInvoiceRequest):
         tariff = await session.get(Tariff, data.tariff_id)
         if not tariff or not tariff.is_active:
             raise HTTPException(404, "Tariff not found")
+        
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,
+                detail={
+                    "error": "ACTIVE_ORDER_EXISTS",
+                    "order_id": active.id,
+                    "status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
+                }
+            )
 
         order = Order(
             idUser=user.idUser,
@@ -534,7 +654,9 @@ async def renew_crypto_invoice(data: RenewCryptoInvoiceRequest):
             purpose_order="extension",
             amount=Decimal(tariff.price_tarif),
             currency="USDT",
-            status="pending"
+            provider="cryptobot",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
         )
         session.add(order)
         await session.flush()
@@ -719,6 +841,17 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         tariff = await session.get(Tariff, data.tariff_id)
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,
+                detail={
+                    "error": "ACTIVE_ORDER_EXISTS",
+                    "order_id": active.id,
+                    "status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
+                }
+            )
+
 
         if not user or not tariff or not tariff.is_active:
             raise HTTPException(404, "Invalid user or tariff")
@@ -736,7 +869,9 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
             purpose_order="buy",
             amount=Decimal(tariff.price_tarif),
             currency="USDT",
-            status="pending"
+            provider="yookassa",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
         )
         session.add(order)
         await session.flush()
@@ -870,11 +1005,6 @@ async def yookassa_webhook(request: Request):
 
 
 
-
-
-
-
-
 # ===== ОПЛАТА С БАЛАНСА =====
 class BuyFromBalanceRequest(BaseModel):
     tg_id: int
@@ -927,9 +1057,7 @@ async def get_wallet_operation_status(operation_id: int):
         if not op:
             raise HTTPException(404, "Wallet operation not found")
 
-        return {
-            "status": op.status
-        }
+        return {"status": op.status}
 
 
 @app.get("/api/rate/xtr")
@@ -945,9 +1073,7 @@ async def get_xtr_rate():
 @app.get("/api/rate/rub")
 async def get_rub_rate():
     async with async_session() as session:
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT")
-        )
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT"))
         return {"rate": str(rate.rate)}
 
 

@@ -35,8 +35,8 @@ async def get_user_wallet(tg_id: int):
 
         wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.idUser))
         return {"balance_usdt": str(wallet.balance_usdt)}
-        
-    
+
+
 # =======================
 # --- SERVERS ---
 async def get_servers() -> List[dict]:
