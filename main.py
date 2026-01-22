@@ -161,7 +161,8 @@ async def get_active_order(tg_id: int):
         return {"active": True,
             "order": {"id": order.id,"status": order.status,"provider": order.provider,"purpose": order.purpose_order,
                 "created_at": order.created_at.isoformat(),"expires_at": order.expires_at.isoformat() if order.expires_at else None,
-                "payment_id": payment.id if payment else None,"provider_payment_id": payment.provider_payment_id if payment else None}
+                "payment_id": payment.id if payment else None,"provider_payment_id": payment.provider_payment_id if payment else None,
+                "payment_url": order.payment_url}
         }
 
 
@@ -267,6 +268,9 @@ async def create_invoice(data: CreateInvoiceRequest):
             CreateInvoiceLink(title=f"VPN {tariff.days} дней",description=server.nameVPN,payload=f"vpn:{order.id}",currency="XTR",
                 prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)])
         )
+        order.payment_url = invoice_link
+        await session.commit()
+
         return {"invoice_link": invoice_link, "order_id": order.id}
 
 
@@ -323,6 +327,8 @@ async def renew_invoice(data: RenewInvoiceRequest):
                 payload=f"renew:{order.id}",currency="XTR",
                 prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)])
         )
+        order.payment_url = invoice_link
+        await session.commit()
         return {"invoice_link": invoice_link, "order_id": order.id}
 
 
@@ -487,6 +493,7 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
 
         # инвойс CryptoBot
         invoice = await crypto.create_invoice(asset="USDT",amount=float(tariff.price_tarif),payload=f"buy:{order.id}")
+        order.payment_url = invoice.mini_app_invoice_url
 
         payment = Payment(order_id=order.id,provider="cryptobot",provider_payment_id=str(invoice.invoice_id),status="pending")
         session.add(payment)
@@ -530,7 +537,8 @@ async def renew_crypto_invoice(data: RenewCryptoInvoiceRequest):
         await session.flush()
 
         invoice = await crypto.create_invoice(asset="USDT",amount=float(tariff.price_tarif),payload=f"renew:{order.id}")
-
+        order.payment_url = invoice.mini_app_invoice_url
+        
         payment = Payment(order_id=order.id,provider="cryptobot",provider_payment_id=str(invoice.invoice_id),status="pending")
         session.add(payment)
         await session.commit()
@@ -673,12 +681,6 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         tariff = await session.get(Tariff, data.tariff_id)
-        active = await get_active_order_for_user(session, user.idUser)
-        if active:
-            raise HTTPException(status_code=409,
-                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
-                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
-            )
 
         if not user or not tariff or not tariff.is_active:
             raise HTTPException(404, "Invalid user or tariff")
@@ -686,6 +688,13 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
         rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT"))
         if not rate:
             raise HTTPException(500, "RUB rate not set")
+        
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
+            )
 
         price_rub = Decimal(tariff.price_tarif) * Decimal(rate.rate)
 
@@ -697,6 +706,7 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
 
         payment_id, confirmation_url = await ykrq.create_yookassa_payment(order.id,price_rub,
             f"Buy VPN {tariff.days} дней, idUser: {user.idUser}")
+        order.payment_url = confirmation_url
 
         payment = Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending")
         session.add(payment)
@@ -785,7 +795,7 @@ async def yookassa_webhook(request: Request):
 
 
 
-# ===== ОПЛАТА С БАЛАНСА =====
+# ОПЛАТА С БАЛАНСА
 class BuyFromBalanceRequest(BaseModel):
     tg_id: int
     tariff_id: int
@@ -812,7 +822,6 @@ async def buy_from_balance(data: BuyFromBalanceRequest):
         if str(e) == "NOT_ENOUGH_BALANCE":
             raise HTTPException(status_code=400, detail="NOT_ENOUGH_BALANCE")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 

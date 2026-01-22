@@ -86,8 +86,7 @@ async def get_server_tariffs(server_id: int):
 async def recalc_server_load(session, server_id: int):
     server = await session.get(ServersVPN, server_id)
     active_count = await session.scalar(select(func.count()).select_from(VPNSubscription).where(VPNSubscription.idServerVPN == server_id,
-        VPNSubscription.is_active == True,VPNSubscription.expires_at > datetime.now(timezone.utc))
-    )
+        VPNSubscription.is_active == True,VPNSubscription.expires_at > datetime.now(timezone.utc)))
     server.now_conn = active_count
     server.is_active = active_count < server.max_conn
 

@@ -169,10 +169,11 @@ class Order(Base):
     server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN"))
     idTarif: Mapped[int] = mapped_column(ForeignKey("tariffs.idTarif"))
     subscription_id: Mapped[int | None] = mapped_column(ForeignKey("vpn_subscriptions.id"),nullable=True)
-    purpose_order: Mapped[str] = mapped_column(String(100)) # "buy" при покупке и "extension" при продлении
+    purpose_order: Mapped[str] = mapped_column(String(100)) # "buy", "extension"
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 6))
     currency: Mapped[str] = mapped_column(String(100))  # XTR / USDT
     provider: Mapped[str] = mapped_column(String(50), default="unknown")  # stars / cryptobot / yookassa / balance
+    payment_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending / paid / failed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

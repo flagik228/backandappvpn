@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from models import async_session, VPNSubscription, Order
+from models import async_session, VPNSubscription, Order, User
+from main import bot
 
 
 """Находит активные VPN-подписки с истёкшим expires_at, помечает их как:
@@ -44,6 +45,14 @@ async def expire_orders_task():
 
         for o in orders:
             o.status = "expired"
+        
+        user = await session.get(User, o.idUser)
+        if user:
+            try:
+                await bot.send_message(chat_id=user.tg_id,
+                    text="⏳ Мы не дождались оплату, заказ истёк. Но можно создать новый))")
+            except Exception:
+                pass
 
         await session.commit()
         print(f"🧾 Expired {len(orders)} pending orders")
