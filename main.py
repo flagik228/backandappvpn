@@ -748,6 +748,7 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
         payment = Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending")
         session.add(payment)
         await session.commit()
+        print(f"🧾 YooKassa invoice requested: tg_id={data.tg_id}, tariff_id={data.tariff_id}")
 
         return {
             "confirmation_url": confirmation_url,
@@ -815,18 +816,12 @@ async def yookassa_webhook(request: Request):
 
             if not tariff or not user or not server:
                 # если чего-то нет - фейлим заказ
-                await session.execute(
-                    update(Order).where(Order.id == order_id).values(status="failed")
-                )
+                await session.execute(update(Order).where(Order.id == order_id).values(status="failed"))
                 await session.commit()
                 return {"ok": True}
 
             # ✅ 4) создаём VPN
-            vpn_data = await berq.create_vpn_xui(
-                user_id=idUser,
-                server_id=server_id,
-                tariff_days=tariff.days
-            )
+            vpn_data = await berq.create_vpn_xui(user_id=idUser,server_id=server_id,tariff_days=tariff.days)
 
             # ✅ 5) сохраняем subscription_id прямо в Order (чтобы повторно не выдавать)
             await session.execute(
