@@ -3,7 +3,7 @@ from sqlalchemy.orm import (Mapped, DeclarativeBase, mapped_column)
 from sqlalchemy.ext.asyncio import (AsyncAttrs, async_sessionmaker, create_async_engine)
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import Column, Integer, ForeignKey, Numeric, Boolean, UniqueConstraint
+from sqlalchemy import Column, Integer, ForeignKey, Numeric, Boolean, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from dotenv import load_dotenv
 import os
@@ -177,6 +177,8 @@ class Order(Base):
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending / paid / failed
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    __table_args__ = (Index("idx_orders_status_expires", "status", "expires_at"),)
 
 
     # оплата заказа

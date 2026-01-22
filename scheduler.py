@@ -46,13 +46,13 @@ async def expire_orders_task():
         for o in orders:
             o.status = "expired"
         
-        user = await session.get(User, o.idUser)
-        if user:
-            try:
-                await bot.send_message(chat_id=user.tg_id,
-                    text="⏳ Мы не дождались оплату, заказ истёк. Но можно создать новый))")
-            except Exception:
-                pass
+            user = await session.get(User, o.idUser)
+            if user:
+                try:
+                    await bot.send_message(chat_id=user.tg_id,
+                        text="⏳ Мы не дождались оплату, заказ истёк. Но можно создать новый))")
+                except Exception:
+                    pass
 
         await session.commit()
         print(f"🧾 Expired {len(orders)} pending orders")
@@ -64,7 +64,7 @@ def start_scheduler():
     scheduler.add_job(update_vpn_subscription_statuses,trigger="interval",minutes=5,id="vpn_status_updater",
         max_instances=1,replace_existing=True,coalesce=True) # если пропустили тики — выполнит один раз
 
-    scheduler.add_job(expire_orders_task,trigger="interval",seconds=30,id="expire_orders_task",
+    scheduler.add_job(expire_orders_task,trigger="interval",minutes=1,id="expire_orders_task",
         max_instances=1,replace_existing=True,)
 
     scheduler.start()
