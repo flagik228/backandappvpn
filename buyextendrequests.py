@@ -9,32 +9,18 @@ from sqlalchemy import select
 import requestsfile as rq
 
 
-# --- СОЗДАНИЕ ЗАКАЗА ---    
+# СОЗДАНИЕ ЗАКАЗА    
 async def create_order(user_id: int,server_id: int,tariff_id: int,amount_usdt: Decimal,purpose_order: str = "buy",currency: str = "XTR"):
     async with async_session() as session:
-        order = Order(
-            idUser=user_id,
-            server_id=server_id,
-            idTarif=tariff_id,
-            purpose_order=purpose_order,
-            amount=int(amount_usdt),
-            currency=currency,
-            status="pending"
-        )
+        order = Order(idUser=user_id,server_id=server_id,idTarif=tariff_id,purpose_order=purpose_order,
+            amount=int(amount_usdt),currency=currency,status="pending")
         session.add(order)
         await session.commit()
         await session.refresh(order)
-        return {
-            "order_id": order.id,
-            "amount": str(amount_usdt),
-            "currency": currency,
-            "idTarif": tariff_id
-        }
+        return {"order_id": order.id,"amount": str(amount_usdt),"currency": currency,"idTarif": tariff_id}
 
 
-# =====================================================================
-# --- СОЗДАНИЕ КЛЮЧА, УСПЕШНАЯ ОПЛАТА
-# =====================================================================
+# СОЗДАНИЕ КЛЮЧА покупка
 async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
     async with async_session() as session:
         user = await session.get(User, user_id)
@@ -45,7 +31,6 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
 
         xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
         client_email = await rq.generate_unique_client_email(session, user_id, server, xui)
-
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
             raise Exception("Inbound not found")
@@ -60,14 +45,8 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         server_name = reality["serverNames"][0]
         short_id = reality["shortIds"][0]
 
-        query = {
-            "type": stream.network,
-            "security": stream.security,
-            "pbk": public_key,
-            "fp": "chrome",
-            "sni": server_name,
-            "sid": short_id,
-        }
+        query = {"type": stream.network,"security": stream.security,"pbk": public_key,
+            "fp": "chrome","sni": server_name,"sid": short_id,}
 
         query_str = "&".join(f"{k}={quote(str(v))}" for k, v in query.items())
 
@@ -79,32 +58,17 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         now = datetime.utcnow()
         expires_at = now + timedelta(days=tariff_days)
 
-        subscription = VPNSubscription(
-            idUser=user_id,
-            idServerVPN=server_id,
-            provider="xui",
-            provider_client_email=client_email,
-            provider_client_uuid=uuid,
-            access_data=access_link,
-            created_at=now,
-            expires_at=expires_at,
-            is_active=True,
-            status="active"
-        )
+        subscription = VPNSubscription(idUser=user_id,idServerVPN=server_id,provider="xui",provider_client_email=client_email,
+            provider_client_uuid=uuid,access_data=access_link,created_at=now,expires_at=expires_at,is_active=True,status="active")
 
         session.add(subscription)
         await rq.recalc_server_load(session, server_id)
         await session.commit()
 
-        return {
-            "subscription_id": subscription.id,
-            "access_data": access_link,
-            "expires_at": expires_at.isoformat(), # для API / логики
-            "expires_at_human": rq.format_datetime_ru(expires_at) # для человека
-        }
+        return {"subscription_id": subscription.id,"access_data": access_link,"expires_at": expires_at.isoformat(),"expires_at_human": rq.format_datetime_ru(expires_at)}
         
         
-# --- ОПЛАТА И ПРОДЛЕНИЕ --- 
+# продление
 async def pay_and_extend_vpn(subscription_id: int, tariff_id: int):
     async with async_session() as session:
         tariff = await session.get(Tariff, tariff_id)
@@ -112,13 +76,11 @@ async def pay_and_extend_vpn(subscription_id: int, tariff_id: int):
             raise ValueError("Tariff not found")
 
         sub = await session.get(VPNSubscription, subscription_id)
-
         if not sub:
             raise ValueError("Subscription not found")
 
         server = await session.get(ServersVPN, sub.idServerVPN)
         xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
-
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
             raise Exception("Inbound not found")
@@ -137,17 +99,11 @@ async def pay_and_extend_vpn(subscription_id: int, tariff_id: int):
         await rq.recalc_server_load(session, sub.idServerVPN)
         await session.commit()
 
-        return {
-            "subscription_id": sub.id,
-            "access_data": sub.access_data,
-            "days_added": tariff.days,
-            "expires_at": sub.expires_at.isoformat(),
-            "expires_at_human": rq.format_datetime_ru(sub.expires_at)
-        }
+        return {"subscription_id": sub.id,"access_data": sub.access_data,"days_added": tariff.days,
+            "expires_at": sub.expires_at.isoformat(),"expires_at_human": rq.format_datetime_ru(sub.expires_at)}
 
 
-# =======================
-# --- УДАЛЕНИЕ КЛЮЧА
+# УДАЛЕНИЕ КЛЮЧА
 async def remove_vpn_xui(subscription: VPNSubscription):
     async with async_session() as session:
         server = await session.get(ServersVPN, subscription.idServerVPN)
@@ -172,9 +128,7 @@ async def remove_vpn_xui(subscription: VPNSubscription):
         await session.commit()
 
 
-# =====================================================================
-# --- ПОКУПКА VPN С БАЛАНСА ---
-# =====================================================================
+# ПОКУПКА VPN С БАЛАНСА
 async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
@@ -194,55 +148,27 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
             raise Exception("Wallet not found")
 
         price = Decimal(tariff.price_tarif)
-
-        # если НЕ ХВАТАЕТ ДЕНЕГ
         if wallet.balance_usdt < price:
             raise Exception("NOT_ENOUGH_BALANCE")
 
         wallet.balance_usdt -= price
 
-        tx = WalletTransaction(
-            wallet_id=wallet.id,
-            amount=-price,
-            type="buy",
-            description=f"VPN purchase ({tariff.days} days)"
-        )
+        tx = WalletTransaction(wallet_id=wallet.id,amount=-price,type="buy",description=f"VPN purchase ({tariff.days} days)")
         session.add(tx)
 
-        order = Order(
-            idUser=user.idUser,
-            server_id=server.idServerVPN,
-            idTarif=tariff.idTarif,
-            purpose_order="buy",
-            amount=price,
-            currency="USDT",
-            status="processing"
-        )
+        order = Order(idUser=user.idUser,server_id=server.idServerVPN,idTarif=tariff.idTarif,purpose_order="buy",
+            amount=price,currency="USDT",status="processing")
         session.add(order)
         await session.flush()
 
-        payment = Payment(
-            order_id=order.id,
-            provider="balance",
-            provider_payment_id=f"balance_{order.id}",
-            status="paid"
-        )
+        payment = Payment(order_id=order.id,provider="balance",provider_payment_id=f"balance_{order.id}",status="paid")
         session.add(payment)
 
-        vpn_data = await create_vpn_xui(
-            user_id=user.idUser,
-            server_id=server.idServerVPN,
-            tariff_days=tariff.days
-        )
+        vpn_data = await create_vpn_xui(user_id=user.idUser,server_id=server.idServerVPN,tariff_days=tariff.days)
         order.status = "completed"
 
         await rq.process_referral_reward(session, order)
-
         await session.commit()
 
-        return {
-            "order_id": order.id,
-            "access_data": vpn_data["access_data"],
-            "expires_at_human": vpn_data["expires_at_human"],
-            "server_name": server.nameVPN
-        }
+        return {"order_id": order.id,"access_data": vpn_data["access_data"],
+            "expires_at_human": vpn_data["expires_at_human"],"server_name": server.nameVPN}

@@ -79,7 +79,6 @@ async def start_cmd(message: Message):
     await message.answer("👋 Добро пожаловать!\n\nОткройте mini app, чтобы продолжить.")
 
 
-# ======================
 # REGISTER
 class RegisterUser(BaseModel):
     tg_id: int
@@ -92,14 +91,12 @@ async def register_user(data: RegisterUser):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if user:
-            # обновляем username если появился
             if data.tg_username and user.tg_username != data.tg_username:
                 user.tg_username = data.tg_username
                 await session.commit()
             return {"status": "exists", "idUser": user.idUser}
 
-        # ищем referrer через start
-        start = await session.scalar(select(UserStart).where(UserStart.tg_id == data.tg_id))
+        start = await session.scalar(select(UserStart).where(UserStart.tg_id == data.tg_id)) # ищем referrer
 
         referrer_id = None
         if start and start.referrer_tg_id:
@@ -107,15 +104,9 @@ async def register_user(data: RegisterUser):
             if ref_user:
                 referrer_id = ref_user.idUser
 
-        user = User(
-            tg_id=data.tg_id,
-            tg_username=data.tg_username,
-            userRole="user",
-            referrer_id=referrer_id
-        )
+        user = User(tg_id=data.tg_id,tg_username=data.tg_username,userRole="user",referrer_id=referrer_id)
         session.add(user)
         await session.flush()
-
         session.add(UserWallet(idUser=user.idUser))
 
         if start:
@@ -140,10 +131,7 @@ ORDER_TTL_MINUTES = 10
 async def get_active_order_for_user(session, user_id: int):
     now = datetime.now(timezone.utc)
 
-    q = (select(Order)
-        .where(Order.idUser == user_id,Order.status.in_(ORDER_ACTIVE_STATUSES)
-        ).order_by(Order.created_at.desc())
-    )
+    q = (select(Order).where(Order.idUser == user_id,Order.status.in_(ORDER_ACTIVE_STATUSES)).order_by(Order.created_at.desc()))
     order = await session.scalar(q)
 
     # Если заказ есть, но он уже протух — сразу помечаем expired
@@ -167,21 +155,13 @@ async def get_active_order(tg_id: int):
         if not order:
             return {"active": False}
 
-        # найдём payment чтобы вернуть ссылку (если есть)
+        # ищем payment чтобы вернуть ссылку
         payment = await session.scalar(select(Payment).where(Payment.order_id == order.id).order_by(Payment.id.desc()))
 
-        return {
-            "active": True,
-            "order": {
-                "id": order.id,
-                "status": order.status,
-                "provider": order.provider,
-                "purpose": order.purpose_order,
-                "created_at": order.created_at.isoformat(),
-                "expires_at": order.expires_at.isoformat() if order.expires_at else None,
-                "payment_id": payment.id if payment else None,
-                "provider_payment_id": payment.provider_payment_id if payment else None
-            }
+        return {"active": True,
+            "order": {"id": order.id,"status": order.status,"provider": order.provider,"purpose": order.purpose_order,
+                "created_at": order.created_at.isoformat(),"expires_at": order.expires_at.isoformat() if order.expires_at else None,
+                "payment_id": payment.id if payment else None,"provider_payment_id": payment.provider_payment_id if payment else None}
         }
 
 
@@ -192,7 +172,7 @@ async def cancel_order(order_id: int):
         if not order:
             raise HTTPException(404, "ORDER_NOT_FOUND")
 
-        # можно отменять только pending
+        # отменять только pending
         if order.status != "pending":
             raise HTTPException(400, "ORDER_CANT_CANCEL")
 
@@ -206,18 +186,15 @@ async def cancel_order(order_id: int):
 @app.get("/api/vpn/status/{tg_id}")
 async def vpn_status(tg_id: int):
     active = await rq.has_active_subscription(tg_id)
-    return {
-        "active": active
-    }
+    return {"active": active}
 
 
-# ==================================================================
-# PUBLIC
+# =PUBLIC================
 @app.get("/api/vpn/servers")
 async def get_servers():
     return await rq.get_servers()
 
-# получение тарифов сервера
+
 @app.get("/api/vpn/tariffs/{server_id}")
 async def get_tariffs(server_id: int):
     try:
@@ -225,14 +202,13 @@ async def get_tariffs(server_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# получение всех подписок пользователя
+# подписки пользователя
 @app.get("/api/vpn/my/{tg_id}")
 async def my_vpns(tg_id: int):
     return await rq.get_my_vpns(tg_id)
 
 
-# === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =============================================
-
+# === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =====
 @app.get("/api/payment/status/{payment_id}")
 async def get_payment_status(payment_id: int):
     async with async_session() as session:
@@ -242,7 +218,6 @@ async def get_payment_status(payment_id: int):
 
         return {"status": payment.status}
 
-# ======================
 # Create Invoice
 class CreateInvoiceRequest(BaseModel):
     tg_id: int
@@ -254,17 +229,12 @@ async def create_invoice(data: CreateInvoiceRequest):
         user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        
+
         active = await get_active_order_for_user(session, user.idUser)
         if active:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "ACTIVE_ORDER_EXISTS",
-                    "order_id": active.id,
-                    "status": active.status,
-                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
-                }
+            raise HTTPException(status_code=409,
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,
+                    "status": active.status,"expires_at": active.expires_at.isoformat() if active.expires_at else None}
             )
 
         tariff = await session.scalar(select(Tariff).where(Tariff.idTarif == data.tariff_id))
@@ -285,36 +255,22 @@ async def create_invoice(data: CreateInvoiceRequest):
         if stars_price < 1:
             stars_price = 1
 
-        # 6) Создаём Order и добавляем в сессию
-        order = Order(
-            idUser=user.idUser,
-            server_id=server.idServerVPN,
-            idTarif=tariff.idTarif,
-            purpose_order="buy",
-            amount=price_usdt,
-            currency="USDT",
-            provider="stars",
-            status="pending",
+        order = Order(idUser=user.idUser,server_id=server.idServerVPN,idTarif=tariff.idTarif,
+            purpose_order="buy",amount=price_usdt,currency="USDT",provider="stars",status="pending",
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
         )
         session.add(order)
         await session.flush()
         await session.commit()
         
-        # 7) Возврат данных для фронта (TG App)
         invoice_link = await bot(
-            CreateInvoiceLink(
-                title=f"VPN {tariff.days} дней",
-                description=server.nameVPN,
-                payload=f"vpn:{order.id}",
-                currency="XTR",
-                prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)]
-            )
+            CreateInvoiceLink(title=f"VPN {tariff.days} дней",description=server.nameVPN,payload=f"vpn:{order.id}",currency="XTR",
+                prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)])
         )
         return {"invoice_link": invoice_link, "order_id": order.id}
 
 
-# -------- ПРОДЛЕНИЕ
+# ПРОДЛЕНИЕ
 class RenewInvoiceRequest(BaseModel):
     tg_id: int
     subscription_id: int
@@ -340,16 +296,12 @@ async def renew_invoice(data: RenewInvoiceRequest):
         rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         if not rate:
             raise HTTPException(500, "Exchange rate not set")
-        
+
         active = await get_active_order_for_user(session, user.idUser)
         if active:
             raise HTTPException(status_code=409,
-                detail={
-                    "error": "ACTIVE_ORDER_EXISTS",
-                    "order_id": active.id,
-                    "status": active.status,
-                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
-                }
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
             )
 
         price_usdt = Decimal(tariff.price_tarif)
@@ -357,16 +309,8 @@ async def renew_invoice(data: RenewInvoiceRequest):
         if stars_price < 1:
             stars_price = 1
 
-        order = Order(
-            idUser=user.idUser,
-            server_id=server.idServerVPN,
-            idTarif=tariff.idTarif,
-            subscription_id=sub.id, #
-            purpose_order="extension",
-            amount=price_usdt,
-            currency="USDT",
-            provider="stars",
-            status="pending",
+        order = Order(idUser=user.idUser,server_id=server.idServerVPN,idTarif=tariff.idTarif,subscription_id=sub.id,
+            purpose_order="extension",amount=price_usdt,currency="USDT",provider="stars",status="pending",
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
         )
 
@@ -375,20 +319,14 @@ async def renew_invoice(data: RenewInvoiceRequest):
         await session.commit()
 
         invoice_link = await bot(
-            CreateInvoiceLink(
-                title=f"Продление VPN {tariff.days} дней",
-                description=server.nameVPN,
-                payload=f"renew:{order.id}",
-                currency="XTR",
-                prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)
-                ]
-            )
+            CreateInvoiceLink(title=f"Продление VPN {tariff.days} дней",description=server.nameVPN,
+                payload=f"renew:{order.id}",currency="XTR",
+                prices=[LabeledPrice(label=f"{tariff.days} дней VPN", amount=stars_price)])
         )
-
         return {"invoice_link": invoice_link, "order_id": order.id}
 
 
-# -------- ПОПОЛНЕНИЕ
+# ПОПОЛНЕНИЕ
 class WalletDepositRequest(BaseModel):
     tg_id: int
     amount_usdt: Decimal
@@ -398,22 +336,11 @@ class WalletDepositRequest(BaseModel):
 async def wallet_deposit_stars(data: WalletDepositRequest):
     result = await wrq.create_stars_deposit(data.tg_id,Decimal(data.amount_usdt))
 
-    invoice_link = await bot(CreateInvoiceLink(
-            title="Пополнение баланса",
-            description=f"Баланс +${data.amount_usdt}",
-            payload=f"wallet:{result['wallet_operation_id']}",
-            currency="XTR",
-            prices=[
-                LabeledPrice(label="Пополнение баланса", amount=result["stars_amount"])
-            ]
-        )
+    invoice_link = await bot(CreateInvoiceLink(title="Пополнение баланса",description=f"Баланс +${data.amount_usdt}",
+            payload=f"wallet:{result['wallet_operation_id']}",currency="XTR",
+            prices=[LabeledPrice(label="Пополнение баланса", amount=result["stars_amount"])])
     )
-
-    return {
-        "invoice_link": invoice_link,
-        "order_id": result["wallet_operation_id"],
-        "stars": result["stars_amount"]
-    }
+    return {"invoice_link": invoice_link,"order_id": result["wallet_operation_id"],"stars": result["stars_amount"]}
 
 
 
@@ -434,13 +361,11 @@ async def create_order_endpoint(data: OrderRequest):
         if not tariff or not tariff.is_active:
             raise HTTPException(status_code=404, detail="Tariff not found")
 
-        # Конвертация USDT -> Stars (берём из ExchangeRate)
         rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         if not rate:
             raise HTTPException(status_code=500, detail="Exchange rate not found")
 
         amount_stars = int(tariff.price_tarif / rate.rate)
-
         return await berq.create_order(user.idUser, data.server_id, data.tariff_id, Decimal(amount_stars), currency="XTR")
 
 
@@ -469,12 +394,8 @@ async def successful_payment(message: Message):
             if not op or op.status != "pending":
                 return
 
-            payment = Payment(
-                wallet_operation_id=op.id,
-                provider="telegram_stars",
-                provider_payment_id=provider_payment_id,
-                status="paid"
-            )
+            payment = Payment(wallet_operation_id=op.id,provider="telegram_stars",
+                provider_payment_id=provider_payment_id,status="paid")
             session.add(payment)
 
             await wrq.complete_wallet_deposit(session, op.id)
@@ -483,7 +404,7 @@ async def successful_payment(message: Message):
         await message.answer("✅ Баланс успешно пополнен!")
         return
 
-    # ПОКУПКА / ПРОДЛЕНИЕ VPN
+    # ПОКУПКА/ПРОДЛЕНИЕ
     if prefix not in ("vpn", "renew"):
         return
 
@@ -493,16 +414,10 @@ async def successful_payment(message: Message):
             return
 
         order.status = "paid"
-
-        payment = Payment(
-            order_id=order.id,
-            provider="telegram_stars",
-            provider_payment_id=provider_payment_id,
-            status="paid"
-        )
+        payment = Payment(order_id=order.id,provider="telegram_stars",
+            provider_payment_id=provider_payment_id,status="paid")
         session.add(payment)
         await session.flush()
-
         order.status = "processing"
 
         tariff = await session.get(Tariff, order.idTarif)
@@ -510,17 +425,10 @@ async def successful_payment(message: Message):
 
         try:
             if order.purpose_order == "buy":
-                vpn_data = await berq.create_vpn_xui(
-                    order.idUser,
-                    order.server_id,
-                    tariff.days
-                )
+                vpn_data = await berq.create_vpn_xui(order.idUser,order.server_id,tariff.days)
 
             elif order.purpose_order == "extension":
-                vpn_data = await berq.pay_and_extend_vpn(
-                    subscription_id=order.subscription_id,
-                    tariff_id=order.idTarif
-                )
+                vpn_data = await berq.pay_and_extend_vpn(subscription_id=order.subscription_id,tariff_id=order.idTarif)
             else:
                 raise Exception("Unknown order purpose")
 
@@ -540,22 +448,18 @@ async def successful_payment(message: Message):
                 f"Сервер: {server.nameVPN}\n"
                 f"Действует до: {vpn_data['expires_at_human']}\n\n"
                 f"<b>Ваш ключ:</b>\n"
-                f"<code>{vpn_data['access_data']}</code>",
-                parse_mode="HTML"
+                f"<code>{vpn_data['access_data']}</code>",parse_mode="HTML"
             )
 
         elif order.purpose_order == "extension":
             await message.answer(
                 f"♻️ <b>VPN успешно продлён!</b>\n"
                 f"➕ Добавлено дней: {vpn_data['days_added']}\n"
-                f"🕒 Новый срок: {vpn_data['expires_at_human']}",
-                parse_mode="HTML"
+                f"🕒 Новый срок: {vpn_data['expires_at_human']}",parse_mode="HTML"
             )
 
 
-
-
-# ================ КРИПТА x Cryptobot
+# ===== КРИПТА x Cryptobot
 class CryptoInvoiceRequest(BaseModel):
     tg_id: int
     tariff_id: int
@@ -567,54 +471,31 @@ async def create_crypto_invoice(data: CryptoInvoiceRequest):
         tariff = await session.get(Tariff, data.tariff_id)
         active = await get_active_order_for_user(session, user.idUser)
         if active:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "ACTIVE_ORDER_EXISTS",
-                    "order_id": active.id,
-                    "status": active.status,
-                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
-                }
+            raise HTTPException(status_code=409,
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
             )
 
         if not user or not tariff or not tariff.is_active:
             raise HTTPException(404, "Invalid user or tariff")
 
-        order = Order(
-            idUser=user.idUser,
-            server_id=tariff.server_id,
-            idTarif=tariff.idTarif,
-            purpose_order="buy",
-            amount=Decimal(tariff.price_tarif),
-            currency="USDT",
-            provider="cryptobot",
-            status="pending",
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
-        )
+        order = Order(idUser=user.idUser,server_id=tariff.server_id,idTarif=tariff.idTarif,purpose_order="buy",
+            amount=Decimal(tariff.price_tarif),currency="USDT",provider="cryptobot",status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES))
         session.add(order)
         await session.flush()
 
-        # Создаём инвойс CryptoBot
-        invoice = await crypto.create_invoice(
-            asset="USDT",
-            amount=float(tariff.price_tarif),
-            payload=f"buy:{order.id}"
-        )
+        # инвойс CryptoBot
+        invoice = await crypto.create_invoice(asset="USDT",amount=float(tariff.price_tarif),payload=f"buy:{order.id}")
 
-        payment = Payment(
-            order_id=order.id,
-            provider="cryptobot",
-            provider_payment_id=str(invoice.invoice_id),
-            status="pending"
-        )
+        payment = Payment(order_id=order.id,provider="cryptobot",provider_payment_id=str(invoice.invoice_id),status="pending")
         session.add(payment)
         await session.commit()
 
-        return {
-            "invoice_url": invoice.mini_app_invoice_url, "order_id": order.id
-        }
+        return {"invoice_url": invoice.mini_app_invoice_url, "order_id": order.id}
 
-# ---- ПРОДЛЕНИЕ cryptobot
+
+# ПРОДЛЕНИЕ cryptobot
 class RenewCryptoInvoiceRequest(BaseModel):
     tg_id: int
     subscription_id: int
@@ -638,82 +519,42 @@ async def renew_crypto_invoice(data: RenewCryptoInvoiceRequest):
         active = await get_active_order_for_user(session, user.idUser)
         if active:
             raise HTTPException(status_code=409,
-                detail={
-                    "error": "ACTIVE_ORDER_EXISTS",
-                    "order_id": active.id,
-                    "status": active.status,
-                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
-                }
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
             )
 
-        order = Order(
-            idUser=user.idUser,
-            server_id=sub.idServerVPN,
-            idTarif=tariff.idTarif,
-            subscription_id=sub.id, #
-            purpose_order="extension",
-            amount=Decimal(tariff.price_tarif),
-            currency="USDT",
-            provider="cryptobot",
-            status="pending",
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
-        )
+        order = Order(idUser=user.idUser,server_id=sub.idServerVPN,idTarif=tariff.idTarif,subscription_id=sub.id,
+            purpose_order="extension",amount=Decimal(tariff.price_tarif),currency="USDT",provider="cryptobot",status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES))
         session.add(order)
         await session.flush()
 
-        invoice = await crypto.create_invoice(
-            asset="USDT",
-            amount=float(tariff.price_tarif),
-            payload=f"renew:{order.id}"
-        )
+        invoice = await crypto.create_invoice(asset="USDT",amount=float(tariff.price_tarif),payload=f"renew:{order.id}")
 
-        payment = Payment(
-            order_id=order.id,
-            provider="cryptobot",
-            provider_payment_id=str(invoice.invoice_id),
-            status="pending"
-        )
+        payment = Payment(order_id=order.id,provider="cryptobot",provider_payment_id=str(invoice.invoice_id),status="pending")
         session.add(payment)
         await session.commit()
 
-        return {
-            "invoice_url": invoice.mini_app_invoice_url,
-            "order_id": order.id
-        }
+        return {"invoice_url": invoice.mini_app_invoice_url,"order_id": order.id}
 
 
-# ---- ПОПОПЛЛНЕНИЕ cryptobot
+# ПОПОПЛЛНЕНИЕ cryptobot
 @app.post("/api/wallet/deposit/crypto")
 async def wallet_deposit_crypto(data: WalletDepositRequest):
-    result = await wrq.create_crypto_deposit(
-        data.tg_id,
-        Decimal(data.amount_usdt)
-    )
+    result = await wrq.create_crypto_deposit(data.tg_id,Decimal(data.amount_usdt))
 
-    # Создаём инвойс CryptoBot
-    invoice = await crypto.create_invoice(
-        asset="USDT",
-        amount=float(data.amount_usdt),
-        payload=f"wallet:{result['wallet_operation_id']}"
-    )
+    invoice = await crypto.create_invoice(asset="USDT",amount=float(data.amount_usdt),payload=f"wallet:{result['wallet_operation_id']}")
 
     async with async_session() as session:
-        payment = Payment(
-            wallet_operation_id=result["wallet_operation_id"],
-            provider="cryptobot",
-            provider_payment_id=str(invoice.invoice_id),
-            status="pending"
-        )
+        payment = Payment(wallet_operation_id=result["wallet_operation_id"],provider="cryptobot",
+            provider_payment_id=str(invoice.invoice_id),status="pending")
         session.add(payment)
         await session.commit()
 
-    return {
-        "invoice_url": invoice.mini_app_invoice_url,
-        "order_id": result["wallet_operation_id"]
-    }
+    return {"invoice_url": invoice.mini_app_invoice_url,"order_id": result["wallet_operation_id"]}
 
 
-# ---- Webhoock от Cryptobot
+# Webhoock от Cryptobot
 @app.post("/api/crypto/webhook")
 async def crypto_webhook(data: dict):
     if data.get("update_type") != "invoice_paid":
@@ -739,37 +580,32 @@ async def crypto_webhook(data: dict):
 
         payment.status = "paid"
 
-        # ===== ПОПОЛНЕНИЕ БАЛАНСА =====
+        # ПОПОЛНЕНИЕ БАЛАНСА
         if prefix == "wallet":
             op = await session.get(WalletOperation, entity_id)
             if not op or op.status != "pending":
                 return {"ok": True}
             
             user = await session.get(User, op.idUser)
-
             await wrq.complete_wallet_deposit(session, op.id)
             await session.commit()
             await bot.send_message(chat_id=user.tg_id,text=("✅ Баланс успешно пополнен!"))
             
             return {"ok": True}
         
-        # ===== ПРОДЛЕНИЕ VPN =====
+        # ПРОДЛЕНИЕ VPN
         if prefix == "renew":
             order = await session.get(Order, entity_id)
             if not order or order.status != "pending":
                 return {"ok": True}
 
             order.status = "processing"
-
             tariff = await session.get(Tariff, order.idTarif)
             server = await session.get(ServersVPN, order.server_id)
             user = await session.get(User, order.idUser)
 
             try:
-                vpn_data = await berq.pay_and_extend_vpn(
-                    subscription_id=order.subscription_id,
-                    tariff_id=order.idTarif
-                )
+                vpn_data = await berq.pay_and_extend_vpn(subscription_id=order.subscription_id,tariff_id=order.idTarif)
             except Exception:
                 order.status = "failed"
                 await session.commit()
@@ -779,19 +615,17 @@ async def crypto_webhook(data: dict):
             await rq.process_referral_reward(session, order)
             await session.commit()
 
-            await bot.send_message(
-                chat_id=user.tg_id,
+            await bot.send_message(chat_id=user.tg_id,
                 text=(
                     f"♻️ <b>VPN успешно продлён!</b>\n"
                     f"➕ Добавлено дней: {vpn_data['days_added']}\n"
                     f"🕒 Новый срок: {vpn_data['expires_at_human']}"
-                ),
-                parse_mode="HTML"
+                ),parse_mode="HTML"
             )
 
             return {"ok": True}
 
-        # ===== ПОКУПКА VPN =====
+        # ПОКУПКА VPN
         if prefix == "buy":
             order = await session.get(Order, entity_id)
             if not order or order.status != "pending":
@@ -814,23 +648,21 @@ async def crypto_webhook(data: dict):
             await rq.process_referral_reward(session, order)
             await session.commit()
 
-            await bot.send_message(
-                chat_id=user.tg_id,
+            await bot.send_message(chat_id=user.tg_id,
                 text=(
                     f"✅ <b>VPN готов!</b>\n"
                     f"Сервер: {server.nameVPN}\n"
                     f"Действует до: {vpn_data['expires_at_human']}\n\n"
                     f"<b>Ваш ключ:</b>\n"
                     f"<code>{vpn_data['access_data']}</code>"
-                ),
-                parse_mode="HTML"
+                ),parse_mode="HTML"
             )
 
     return {"ok": True}
 
 
 
-# ===== ЮKASSA ОПЛАТА =====
+# ЮKASSA ОПЛАТА 
 class YooKassaInvoiceRequest(BaseModel):
     tg_id: int
     tariff_id: int
@@ -844,14 +676,9 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
         active = await get_active_order_for_user(session, user.idUser)
         if active:
             raise HTTPException(status_code=409,
-                detail={
-                    "error": "ACTIVE_ORDER_EXISTS",
-                    "order_id": active.id,
-                    "status": active.status,
-                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
-                }
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
             )
-
 
         if not user or not tariff or not tariff.is_active:
             raise HTTPException(404, "Invalid user or tariff")
@@ -862,46 +689,29 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
 
         price_rub = Decimal(tariff.price_tarif) * Decimal(rate.rate)
 
-        order = Order(
-            idUser=user.idUser,
-            server_id=tariff.server_id,
-            idTarif=tariff.idTarif,
-            purpose_order="buy",
-            amount=Decimal(tariff.price_tarif),
-            currency="USDT",
-            provider="yookassa",
-            status="pending",
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
-        )
+        order = Order(idUser=user.idUser,server_id=tariff.server_id,idTarif=tariff.idTarif,purpose_order="buy",
+            amount=Decimal(tariff.price_tarif),currency="USDT",provider="yookassa",status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES))
         session.add(order)
         await session.flush()
 
         payment_id, confirmation_url = await ykrq.create_yookassa_payment(order.id,price_rub,
-            f"Buy VPN {tariff.days} дней, idUser: {user.idUser}"
-        )
+            f"Buy VPN {tariff.days} дней, idUser: {user.idUser}")
 
         payment = Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending")
         session.add(payment)
         await session.commit()
         print(f"🧾 YooKassa invoice requested: tg_id={data.tg_id}, tariff_id={data.tariff_id}")
 
-        return {
-            "confirmation_url": confirmation_url,
-            "order_id": order.id,
-            "amount_rub": str(price_rub)
-        }
+        return {"confirmation_url": confirmation_url,"order_id": order.id,"amount_rub": str(price_rub)}
 
 
 # юkassa webhoock
-
-
 logger = logging.getLogger(__name__)
-
 
 @app.post("/api/yookassa/webhook")
 async def yookassa_webhook(request: Request):
     data = await request.json()
-
     notification = WebhookNotificationFactory().create(data)
 
     if notification.event != "payment.succeeded":
@@ -912,36 +722,22 @@ async def yookassa_webhook(request: Request):
 
     async with async_session() as session:
         try:
-            # ✅ 1) атомарно "забираем" заказ в processing ТОЛЬКО если он pending
-            result = await session.execute(
-                update(Order)
-                .where(Order.id == order_id, Order.status == "pending")
-                .values(status="processing")
-                .returning(Order.id, Order.idUser, Order.server_id, Order.idTarif, Order.subscription_id)
-            )
+            result = await session.execute(update(Order).where(Order.id == order_id, Order.status == "pending")
+                .values(status="processing").returning(Order.id, Order.idUser, Order.server_id, Order.idTarif, Order.subscription_id))
 
             row = result.first()
 
-            # Если row == None -> либо заказ не найден, либо уже не pending (обработан)
             if not row:
                 await session.commit()
                 return {"ok": True}
 
-            # распакуем данные
             _, idUser, server_id, idTarif, subscription_id = row
 
-            # ✅ 2) доп защита: если VPN уже выдавался - выходим
             if subscription_id is not None:
                 await session.commit()
                 return {"ok": True}
 
-            # ✅ 3) отмечаем платеж как paid (idempotent)
-            pay = await session.scalar(
-                select(Payment).where(
-                    Payment.provider == "yookassa",
-                    Payment.provider_payment_id == payment_obj.id
-                )
-            )
+            pay = await session.scalar(select(Payment).where(Payment.provider == "yookassa",Payment.provider_payment_id == payment_obj.id))
             if pay:
                 pay.status = "paid"
 
@@ -950,38 +746,28 @@ async def yookassa_webhook(request: Request):
             server = await session.get(ServersVPN, server_id)
 
             if not tariff or not user or not server:
-                # если чего-то нет - фейлим заказ
                 await session.execute(update(Order).where(Order.id == order_id).values(status="failed"))
                 await session.commit()
                 return {"ok": True}
 
-            # ✅ 4) создаём VPN
             vpn_data = await berq.create_vpn_xui(user_id=idUser,server_id=server_id,tariff_days=tariff.days)
 
-            # ✅ 5) сохраняем subscription_id прямо в Order (чтобы повторно не выдавать)
-            await session.execute(
-                update(Order)
-                .where(Order.id == order_id)
-                .values(status="completed", subscription_id=vpn_data["subscription_id"])
-            )
+            # сохраняем subscription_id в Order
+            await session.execute(update(Order).where(Order.id == order_id)
+                .values(status="completed", subscription_id=vpn_data["subscription_id"]))
 
-            # рефералка
             order_obj = await session.get(Order, order_id)
             await rq.process_referral_reward(session, order_obj)
-
             await session.commit()
 
-            # ✅ 6) отправляем пользователю ключ
-            await bot.send_message(
-                chat_id=user.tg_id,
+            await bot.send_message(chat_id=user.tg_id,
                 text=(
                     f"✅ <b>VPN готов!</b>\n"
                     f"Сервер: {server.nameVPN}\n"
                     f"Действует до: {vpn_data['expires_at_human']}\n\n"
                     f"<b>Ваш ключ:</b>\n"
                     f"<code>{vpn_data['access_data']}</code>"
-                ),
-                parse_mode="HTML"
+                ),parse_mode="HTML"
             )
 
             return {"ok": True}
@@ -989,19 +775,13 @@ async def yookassa_webhook(request: Request):
         except Exception as e:
             logger.exception(f"YooKassa webhook error for order {order_id}: {e}")
 
-            # если что-то пошло не так - не оставляем processing навсегда
             try:
-                await session.execute(
-                    update(Order)
-                    .where(Order.id == order_id, Order.status == "processing")
-                    .values(status="failed")
-                )
+                await session.execute(update(Order).where(Order.id == order_id, Order.status == "processing").values(status="failed"))
                 await session.commit()
             except:
                 await session.rollback()
 
             return {"ok": True}
-
 
 
 
@@ -1014,10 +794,7 @@ class BuyFromBalanceRequest(BaseModel):
 @app.post("/api/vpn/buy-from-balance")
 async def buy_from_balance(data: BuyFromBalanceRequest):
     try:
-        result = await berq.buy_vpn_from_balance(
-            tg_id=data.tg_id,
-            tariff_id=data.tariff_id
-        )
+        result = await berq.buy_vpn_from_balance(tg_id=data.tg_id,tariff_id=data.tariff_id)
         
         await bot.send_message(chat_id=data.tg_id,
             text=(
@@ -1039,14 +816,13 @@ async def buy_from_balance(data: BuyFromBalanceRequest):
 
 
 
-# Проверка успешного заказа после покупки
+# Проверка успешного заказа
 @app.get("/api/order/status/{order_id}")
 async def get_order_status(order_id: int):
     async with async_session() as session:
         order = await session.get(Order, order_id)
         if not order:
             raise HTTPException(404, "Order not found")
-
         return {"status": order.status}
 
 # Проверка успешной оплаты пополнения
@@ -1056,7 +832,6 @@ async def get_wallet_operation_status(operation_id: int):
         op = await session.get(WalletOperation, operation_id)
         if not op:
             raise HTTPException(404, "Wallet operation not found")
-
         return {"status": op.status}
 
 
@@ -1066,7 +841,6 @@ async def get_xtr_rate():
         rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         if not rate:
             raise HTTPException(404, "Rate not set")
-
         return {"rate": str(rate.rate)}
 
 
@@ -1085,15 +859,13 @@ async def referrals_list(tg_id: int):
 
 @app.get("/api/admin/referrals-count/{tg_id}")
 async def get_referrals_count(
-    tg_id: int = Path(..., description="TG ID пользователя")
-):
+    tg_id: int = Path(..., description="TG ID пользователя")):
     count = await rq.get_referrals_count(tg_id)
     return {"count": count}
 
 @app.get("/api/admin/referrals/{tg_id}")
 async def get_referrals(
-    tg_id: int = Path(..., description="TG ID пользователя")
-):
+    tg_id: int = Path(..., description="TG ID пользователя")):
     return await rq.get_referrals_list(tg_id)
 
 
@@ -1103,15 +875,10 @@ async def get_referrals(
 async def get_tasks(tg_id: int):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
-
         completed = await session.scalars(select(UserTask.task_key).where(UserTask.idUser == user.idUser))
-
         completed_keys = set(completed)
 
-        return [{
-                **task,
-                "completed": task["key"] in completed_keys
-            }
+        return [{**task,"completed": task["key"] in completed_keys}
             for task in taskrq.TASKS
         ]
 
@@ -1131,15 +898,10 @@ async def get_rewards(tg_id: int):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
         rewards = await session.scalars(select(UserReward)
-            .where(
-                UserReward.idUser == user.idUser,
-                UserReward.is_activated == False
-            )
+            .where(UserReward.idUser == user.idUser,UserReward.is_activated == False)
         )
 
-        return [{
-            "id": r.id,
-            "days": r.days
+        return [{"id": r.id,"days": r.days
         } for r in rewards]
 
 
@@ -1154,15 +916,9 @@ async def reward_preview(tg_id: int, reward_id: int, server_id: int):
         if not reward or reward.idUser != user.idUser:
             raise HTTPException(404, "Reward not found")
 
-        sub = await session.scalar(select(VPNSubscription).where(
-                VPNSubscription.idUser == user.idUser,
-                VPNSubscription.idServerVPN == server_id)
-        )
+        sub = await session.scalar(select(VPNSubscription).where(VPNSubscription.idUser == user.idUser,VPNSubscription.idServerVPN == server_id))
 
-        return {
-            "mode": "extend" if sub else "create",
-            "days": reward.days
-        }
+        return {"mode": "extend" if sub else "create","days": reward.days}
 
 
 @app.post("/api/rewards/activate")
