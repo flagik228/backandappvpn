@@ -5,6 +5,8 @@ from fastapi import FastAPI, HTTPException, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import select, update, delete
+from sqlalchemy.exc import SQLAlchemyError
+import logging
 import os
 
 from aiogram import Bot, Dispatcher, F
@@ -755,9 +757,14 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
 
 
 # юkassa webhoock
+
+
+logger = logging.getLogger(__name__)
+
+
 @app.post("/api/yookassa/webhook")
 async def yookassa_webhook(request: Request):
-    data = await request.json()  # ✅ ВАЖНО: json, а не body()
+    data = await request.json()
 
     notification = WebhookNotificationFactory().create(data)
 
@@ -768,45 +775,103 @@ async def yookassa_webhook(request: Request):
     order_id = int(payment_obj.metadata["order_id"])
 
     async with async_session() as session:
-        order = await session.get(Order, order_id)
-        if not order or order.status != "pending":
-            return {"ok": True}
-        order.status = "processing"
-
-        pay = await session.scalar(select(Payment).where(Payment.provider == "yookassa",Payment.provider_payment_id == payment_obj.id))
-        if pay:
-            pay.status = "paid"
-
-        tariff = await session.get(Tariff, order.idTarif)
-        user = await session.get(User, order.idUser)
-        server = await session.get(ServersVPN, order.server_id)
-
         try:
-            vpn_data = await berq.create_vpn_xui(
-                order.idUser,
-                order.server_id,
-                tariff.days
+            # ✅ 1) атомарно "забираем" заказ в processing ТОЛЬКО если он pending
+            result = await session.execute(
+                update(Order)
+                .where(Order.id == order_id, Order.status == "pending")
+                .values(status="processing")
+                .returning(Order.id, Order.idUser, Order.server_id, Order.idTarif, Order.subscription_id)
             )
-        except Exception:
-            order.status = "failed"
+
+            row = result.first()
+
+            # Если row == None -> либо заказ не найден, либо уже не pending (обработан)
+            if not row:
+                await session.commit()
+                return {"ok": True}
+
+            # распакуем данные
+            _, idUser, server_id, idTarif, subscription_id = row
+
+            # ✅ 2) доп защита: если VPN уже выдавался - выходим
+            if subscription_id is not None:
+                await session.commit()
+                return {"ok": True}
+
+            # ✅ 3) отмечаем платеж как paid (idempotent)
+            pay = await session.scalar(
+                select(Payment).where(
+                    Payment.provider == "yookassa",
+                    Payment.provider_payment_id == payment_obj.id
+                )
+            )
+            if pay:
+                pay.status = "paid"
+
+            tariff = await session.get(Tariff, idTarif)
+            user = await session.get(User, idUser)
+            server = await session.get(ServersVPN, server_id)
+
+            if not tariff or not user or not server:
+                # если чего-то нет - фейлим заказ
+                await session.execute(
+                    update(Order).where(Order.id == order_id).values(status="failed")
+                )
+                await session.commit()
+                return {"ok": True}
+
+            # ✅ 4) создаём VPN
+            vpn_data = await berq.create_vpn_xui(
+                user_id=idUser,
+                server_id=server_id,
+                tariff_days=tariff.days
+            )
+
+            # ✅ 5) сохраняем subscription_id прямо в Order (чтобы повторно не выдавать)
+            await session.execute(
+                update(Order)
+                .where(Order.id == order_id)
+                .values(status="completed", subscription_id=vpn_data["subscription_id"])
+            )
+
+            # рефералка
+            order_obj = await session.get(Order, order_id)
+            await rq.process_referral_reward(session, order_obj)
+
             await session.commit()
+
+            # ✅ 6) отправляем пользователю ключ
+            await bot.send_message(
+                chat_id=user.tg_id,
+                text=(
+                    f"✅ <b>VPN готов!</b>\n"
+                    f"Сервер: {server.nameVPN}\n"
+                    f"Действует до: {vpn_data['expires_at_human']}\n\n"
+                    f"<b>Ваш ключ:</b>\n"
+                    f"<code>{vpn_data['access_data']}</code>"
+                ),
+                parse_mode="HTML"
+            )
+
             return {"ok": True}
 
-        order.status = "completed"
-        await rq.process_referral_reward(session, order)
-        await session.commit()
+        except Exception as e:
+            logger.exception(f"YooKassa webhook error for order {order_id}: {e}")
 
-        await bot.send_message(chat_id=user.tg_id,
-            text=(
-                f"✅ <b>VPN готов!</b>\n"
-                f"Сервер: {server.nameVPN}\n"
-                f"Действует до: {vpn_data['expires_at_human']}\n\n"
-                f"<b>Ваш ключ:</b>\n"
-                f"<code>{vpn_data['access_data']}</code>"
-            ),parse_mode="HTML"
-        )
+            # если что-то пошло не так - не оставляем processing навсегда
+            try:
+                await session.execute(
+                    update(Order)
+                    .where(Order.id == order_id, Order.status == "processing")
+                    .values(status="failed")
+                )
+                await session.commit()
+            except:
+                await session.rollback()
 
-    return {"ok": True}
+            return {"ok": True}
+
 
 
 
