@@ -7,7 +7,7 @@ from urllib.parse import quote
 from xui_api import XUIApi
 from sqlalchemy import select
 import requestsfile as rq
-from main import get_active_order_for_user
+import main as main
 
 
 # СОЗДАНИЕ ЗАКАЗА    
@@ -182,8 +182,7 @@ async def extend_vpn_from_balance(tg_id: int, subscription_id: int, tariff_id: i
         if not user:
             raise Exception("User not found")
 
-        # 🔒 защита от двойных заказов
-        active = await get_active_order_for_user(session, user.idUser)
+        active = await main.get_active_order_for_user(session, user.idUser)
         if active:
             raise Exception("ACTIVE_ORDER_EXISTS")
 
@@ -195,9 +194,7 @@ async def extend_vpn_from_balance(tg_id: int, subscription_id: int, tariff_id: i
         if not tariff or not tariff.is_active:
             raise Exception("Tariff not found")
 
-        wallet = await session.scalar(
-            select(UserWallet).where(UserWallet.idUser == user.idUser)
-        )
+        wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.idUser))
         if not wallet:
             raise Exception("Wallet not found")
 
