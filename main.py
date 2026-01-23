@@ -131,16 +131,20 @@ ORDER_TTL_MINUTES = 10
 async def get_active_order_for_user(session, user_id: int):
     now = datetime.now(timezone.utc)
 
-    q = (select(Order).where(Order.idUser == user_id,Order.status.in_(ORDER_ACTIVE_STATUSES)).order_by(Order.created_at.desc()))
+    q = (select(Order).where(Order.idUser == user_id,Order.status.in_(("pending", "processing"))).order_by(Order.created_at.desc()))
+
     order = await session.scalar(q)
 
-    # Если заказ есть, но он уже протух — сразу помечаем expired
-    if order and order.expires_at and order.expires_at < now and order.status == "pending":
+    if not order:
+        return None
+
+    if order.expires_at and order.expires_at < now and order.status == "pending":
         order.status = "expired"
         await session.commit()
         return None
 
     return order
+
 
 
 # проверка активного заказа
@@ -159,7 +163,7 @@ async def get_active_order(tg_id: int):
         payment = await session.scalar(select(Payment).where(Payment.order_id == order.id).order_by(Payment.id.desc()))
 
         return {"active": True,
-            "order": {"id": order.id,"status": order.status,"provider": order.provider,"purpose": order.purpose_order,
+            "order": {"id": order.id,"status": order.status,"provider": order.provider,"purpose": order.purpose_order, "subscription_id": order.subscription_id,
                 "created_at": order.created_at.isoformat(),"expires_at": order.expires_at.isoformat() if order.expires_at else None,
                 "payment_id": payment.id if payment else None,"provider_payment_id": payment.provider_payment_id if payment else None,
                 "payment_url": order.payment_url}
@@ -173,7 +177,6 @@ async def cancel_order(order_id: int):
         if not order:
             raise HTTPException(404, "ORDER_NOT_FOUND")
 
-        # отменять только pending
         if order.status != "pending":
             raise HTTPException(400, "ORDER_CANT_CANCEL")
 
@@ -420,8 +423,7 @@ async def successful_payment(message: Message):
             return
 
         order.status = "paid"
-        payment = Payment(order_id=order.id,provider="telegram_stars",
-            provider_payment_id=provider_payment_id,status="paid")
+        payment = Payment(order_id=order.id,provider="telegram_stars",provider_payment_id=provider_payment_id,status="paid")
         session.add(payment)
         await session.flush()
         order.status = "processing"
