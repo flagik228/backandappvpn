@@ -1,4 +1,3 @@
-# yookassarequests.py
 from yookassa import Configuration, Payment
 from decimal import Decimal
 import uuid

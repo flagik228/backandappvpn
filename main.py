@@ -672,11 +672,10 @@ async def crypto_webhook(data: dict):
 
 
 
-# ЮKASSA ОПЛАТА 
+# ЮKASSA покупка 
 class YooKassaInvoiceRequest(BaseModel):
     tg_id: int
     tariff_id: int
-
 
 @app.post("/api/vpn/yookassa-invoice")
 async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
@@ -716,6 +715,47 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
         print(f"🧾 YooKassa invoice requested: tg_id={data.tg_id}, tariff_id={data.tariff_id}")
 
         return {"confirmation_url": confirmation_url,"order_id": order.id,"amount_rub": str(price_rub)}
+
+
+# ЮKASSA продление
+class RenewYooKassaInvoiceRequest(BaseModel):
+    tg_id: int
+    subscription_id: int
+    tariff_id: int
+
+@app.post("/api/vpn/renew-yookassa-invoice")
+async def renew_yookassa_invoice(data: RenewYooKassaInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        sub = await session.get(VPNSubscription, data.subscription_id)
+        tariff = await session.get(Tariff, data.tariff_id)
+
+        if not user or not sub or not tariff or not tariff.is_active:
+            raise HTTPException(404, "Invalid data")
+
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT"))
+        if not rate:
+            raise HTTPException(500, "RUB rate not set")
+
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,detail={"error": "ACTIVE_ORDER_EXISTS"})
+
+        price_rub = Decimal(tariff.price_tarif) * Decimal(rate.rate)
+
+        order = Order(idUser=user.idUser,server_id=sub.idServerVPN,idTarif=tariff.idTarif,subscription_id=sub.id,purpose_order="extension",amount=Decimal(tariff.price_tarif),
+            currency="USDT",provider="yookassa",status="pending",expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES))
+        session.add(order)
+        await session.flush()
+
+        payment_id, confirmation_url = await ykrq.create_yookassa_payment(order.id,price_rub,f"Renew VPN {tariff.days} days")
+
+        order.payment_url = confirmation_url
+        session.add(Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending"))
+        await session.commit()
+
+        return {"confirmation_url": confirmation_url,"order_id": order.id,"amount_rub": str(price_rub)}
+
 
 
 # юkassa webhoock
@@ -797,7 +837,7 @@ async def yookassa_webhook(request: Request):
 
 
 
-# ОПЛАТА С БАЛАНСА
+# buy С БАЛАНСА
 class BuyFromBalanceRequest(BaseModel):
     tg_id: int
     tariff_id: int
@@ -824,6 +864,67 @@ async def buy_from_balance(data: BuyFromBalanceRequest):
         if str(e) == "NOT_ENOUGH_BALANCE":
             raise HTTPException(status_code=400, detail="NOT_ENOUGH_BALANCE")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# продление С БАЛАНСА
+class RenewFromBalanceRequest(BaseModel):
+    tg_id: int
+    subscription_id: int
+    tariff_id: int
+
+
+@app.post("/api/vpn/renew-from-balance")
+async def renew_from_balance(data: RenewFromBalanceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        sub = await session.get(VPNSubscription, data.subscription_id)
+        if not sub:
+            raise HTTPException(404, "Subscription not found")
+
+        tariff = await session.get(Tariff, data.tariff_id)
+        if not tariff or not tariff.is_active:
+            raise HTTPException(404, "Tariff not found")
+
+        # проверяем активный заказ
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,detail="ACTIVE_ORDER_EXISTS")
+
+        price = Decimal(tariff.price_tarif)
+        wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.idUser))
+        if not wallet or wallet.balance < price:
+            raise HTTPException(status_code=400, detail="NOT_ENOUGH_BALANCE")
+
+        wallet.balance -= price
+        tx = WalletTransaction(idUser=user.idUser,amount=-price,currency="USDT",type="vpn_renew",comment=f"VPN renew subscription #{sub.id}")
+        session.add(tx)
+
+        try:
+            vpn_data = await berq.pay_and_extend_vpn(subscription_id=sub.id,tariff_id=tariff.idTarif)
+        except Exception as e:
+            await session.rollback()
+            raise HTTPException(500, str(e))
+
+        order = Order(idUser=user.idUser,server_id=sub.idServerVPN,idTarif=tariff.idTarif,subscription_id=sub.id,
+            purpose_order="extension",amount=price,currency="USDT",provider="balance",status="completed")
+        session.add(order)
+        await session.flush()
+
+        await rq.process_referral_reward(session, order)
+        await session.commit()
+
+        await bot.send_message(chat_id=user.tg_id,
+            text=(
+                f"♻️ <b>VPN успешно продлён!</b>\n"
+                f"➕ Добавлено дней: {vpn_data['days_added']}\n"
+                f"🕒 Новый срок: {vpn_data['expires_at_human']}"
+            ),parse_mode="HTML")
+
+        return vpn_data
+
 
 
 
