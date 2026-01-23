@@ -733,28 +733,62 @@ async def renew_yookassa_invoice(data: RenewYooKassaInvoiceRequest):
         if not user or not sub or not tariff or not tariff.is_active:
             raise HTTPException(404, "Invalid data")
 
-        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT"))
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "ACTIVE_ORDER_EXISTS",
+                    "order_id": active.id,
+                    "status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
+                }
+            )
+
+        rate = await session.scalar(
+            select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT")
+        )
         if not rate:
             raise HTTPException(500, "RUB rate not set")
 
-        active = await get_active_order_for_user(session, user.idUser)
-        if active:
-            raise HTTPException(status_code=409,detail={"error": "ACTIVE_ORDER_EXISTS"})
-
         price_rub = Decimal(tariff.price_tarif) * Decimal(rate.rate)
 
-        order = Order(idUser=user.idUser,server_id=sub.idServerVPN,idTarif=tariff.idTarif,subscription_id=sub.id,purpose_order="extension",amount=Decimal(tariff.price_tarif),
-            currency="USDT",provider="yookassa",status="pending",expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES))
+        order = Order(
+            idUser=user.idUser,
+            server_id=sub.idServerVPN,
+            idTarif=tariff.idTarif,
+            subscription_id=sub.id,
+            purpose_order="extension",
+            amount=Decimal(tariff.price_tarif),
+            currency="USDT",
+            provider="yookassa",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
+        )
         session.add(order)
         await session.flush()
 
-        payment_id, confirmation_url = await ykrq.create_yookassa_payment(order.id,price_rub,f"Renew VPN {tariff.days} days")
+        payment_id, confirmation_url = await ykrq.create_yookassa_payment(
+            order.id,
+            price_rub,
+            f"Renew VPN {tariff.days} days"
+        )
 
         order.payment_url = confirmation_url
-        session.add(Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending"))
+        session.add(Payment(
+            order_id=order.id,
+            provider="yookassa",
+            provider_payment_id=payment_id,
+            status="pending"
+        ))
+
         await session.commit()
 
-        return {"confirmation_url": confirmation_url,"order_id": order.id,"amount_rub": str(price_rub)}
+        return {
+            "confirmation_url": confirmation_url,
+            "order_id": order.id,
+            "amount_rub": str(price_rub)
+        }
 
 
 
@@ -770,70 +804,76 @@ async def yookassa_webhook(request: Request):
         return {"ok": True}
 
     payment_obj = notification.object
-    order_id = int(payment_obj.metadata["order_id"])
+    order_id = int(payment_obj.metadata.get("order_id"))
 
     async with async_session() as session:
+        order = await session.get(Order, order_id)
+        if not order or order.status != "pending":
+            return {"ok": True}
+
+        order.status = "processing"
+
+        payment = await session.scalar(
+            select(Payment)
+            .where(Payment.provider == "yookassa")
+            .where(Payment.provider_payment_id == payment_obj.id)
+        )
+        if payment:
+            payment.status = "paid"
+
+        user = await session.get(User, order.idUser)
+        tariff = await session.get(Tariff, order.idTarif)
+        server = await session.get(ServersVPN, order.server_id)
+
         try:
-            result = await session.execute(update(Order).where(Order.id == order_id, Order.status == "pending")
-                .values(status="processing").returning(Order.id, Order.idUser, Order.server_id, Order.idTarif, Order.subscription_id))
+            if order.purpose_order == "buy":
+                vpn_data = await berq.create_vpn_xui(
+                    user_id=user.idUser,
+                    server_id=order.server_id,
+                    tariff_days=tariff.days
+                )
 
-            row = result.first()
+                order.subscription_id = vpn_data["subscription_id"]
 
-            if not row:
-                await session.commit()
-                return {"ok": True}
+                await bot.send_message(
+                    chat_id=user.tg_id,
+                    text=(
+                        f"✅ <b>VPN готов!</b>\n"
+                        f"Сервер: {server.nameVPN}\n"
+                        f"Действует до: {vpn_data['expires_at_human']}\n\n"
+                        f"<b>Ваш ключ:</b>\n"
+                        f"<code>{vpn_data['access_data']}</code>"
+                    ),
+                    parse_mode="HTML"
+                )
 
-            _, idUser, server_id, idTarif, subscription_id = row
+            elif order.purpose_order == "extension":
+                vpn_data = await berq.pay_and_extend_vpn(
+                    subscription_id=order.subscription_id,
+                    tariff_id=order.idTarif
+                )
 
-            if subscription_id is not None:
-                await session.commit()
-                return {"ok": True}
+                await bot.send_message(
+                    chat_id=user.tg_id,
+                    text=(
+                        f"♻️ <b>VPN успешно продлён!</b>\n"
+                        f"➕ Добавлено дней: {vpn_data['days_added']}\n"
+                        f"🕒 Новый срок: {vpn_data['expires_at_human']}"
+                    ),
+                    parse_mode="HTML"
+                )
 
-            pay = await session.scalar(select(Payment).where(Payment.provider == "yookassa",Payment.provider_payment_id == payment_obj.id))
-            if pay:
-                pay.status = "paid"
-
-            tariff = await session.get(Tariff, idTarif)
-            user = await session.get(User, idUser)
-            server = await session.get(ServersVPN, server_id)
-
-            if not tariff or not user or not server:
-                await session.execute(update(Order).where(Order.id == order_id).values(status="failed"))
-                await session.commit()
-                return {"ok": True}
-
-            vpn_data = await berq.create_vpn_xui(user_id=idUser,server_id=server_id,tariff_days=tariff.days)
-
-            # сохраняем subscription_id в Order
-            await session.execute(update(Order).where(Order.id == order_id)
-                .values(status="completed", subscription_id=vpn_data["subscription_id"]))
-
-            order_obj = await session.get(Order, order_id)
-            await rq.process_referral_reward(session, order_obj)
+            order.status = "completed"
+            await rq.process_referral_reward(session, order)
             await session.commit()
-
-            await bot.send_message(chat_id=user.tg_id,
-                text=(
-                    f"✅ <b>VPN готов!</b>\n"
-                    f"Сервер: {server.nameVPN}\n"
-                    f"Действует до: {vpn_data['expires_at_human']}\n\n"
-                    f"<b>Ваш ключ:</b>\n"
-                    f"<code>{vpn_data['access_data']}</code>"
-                ),parse_mode="HTML"
-            )
-
             return {"ok": True}
 
         except Exception as e:
-            logger.exception(f"YooKassa webhook error for order {order_id}: {e}")
-
-            try:
-                await session.execute(update(Order).where(Order.id == order_id, Order.status == "processing").values(status="failed"))
-                await session.commit()
-            except:
-                await session.rollback()
-
+            order.status = "failed"
+            await session.commit()
+            logger.exception(f"YooKassa webhook error: {e}")
             return {"ok": True}
+
 
 
 
@@ -841,7 +881,6 @@ async def yookassa_webhook(request: Request):
 class BuyFromBalanceRequest(BaseModel):
     tg_id: int
     tariff_id: int
-
 
 @app.post("/api/vpn/buy-from-balance")
 async def buy_from_balance(data: BuyFromBalanceRequest):
@@ -872,58 +911,17 @@ class RenewFromBalanceRequest(BaseModel):
     subscription_id: int
     tariff_id: int
 
-
 @app.post("/api/vpn/renew-from-balance")
 async def renew_from_balance(data: RenewFromBalanceRequest):
-    async with async_session() as session:
-        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
-        if not user:
-            raise HTTPException(404, "User not found")
+    try:
+        return await berq.extend_vpn_from_balance(tg_id=data.tg_id,subscription_id=data.subscription_id,tariff_id=data.tariff_id)
+    except Exception as e:
+        if str(e) == "NOT_ENOUGH_BALANCE":
+            raise HTTPException(400, "NOT_ENOUGH_BALANCE")
+        if str(e) == "ACTIVE_ORDER_EXISTS":
+            raise HTTPException(409, "ACTIVE_ORDER_EXISTS")
+        raise HTTPException(400, str(e))
 
-        sub = await session.get(VPNSubscription, data.subscription_id)
-        if not sub:
-            raise HTTPException(404, "Subscription not found")
-
-        tariff = await session.get(Tariff, data.tariff_id)
-        if not tariff or not tariff.is_active:
-            raise HTTPException(404, "Tariff not found")
-
-        # проверяем активный заказ
-        active = await get_active_order_for_user(session, user.idUser)
-        if active:
-            raise HTTPException(status_code=409,detail="ACTIVE_ORDER_EXISTS")
-
-        price = Decimal(tariff.price_tarif)
-        wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.idUser))
-        if not wallet or wallet.balance < price:
-            raise HTTPException(status_code=400, detail="NOT_ENOUGH_BALANCE")
-
-        wallet.balance -= price
-        tx = WalletTransaction(idUser=user.idUser,amount=-price,currency="USDT",type="vpn_renew",comment=f"VPN renew subscription #{sub.id}")
-        session.add(tx)
-
-        try:
-            vpn_data = await berq.pay_and_extend_vpn(subscription_id=sub.id,tariff_id=tariff.idTarif)
-        except Exception as e:
-            await session.rollback()
-            raise HTTPException(500, str(e))
-
-        order = Order(idUser=user.idUser,server_id=sub.idServerVPN,idTarif=tariff.idTarif,subscription_id=sub.id,
-            purpose_order="extension",amount=price,currency="USDT",provider="balance",status="completed")
-        session.add(order)
-        await session.flush()
-
-        await rq.process_referral_reward(session, order)
-        await session.commit()
-
-        await bot.send_message(chat_id=user.tg_id,
-            text=(
-                f"♻️ <b>VPN успешно продлён!</b>\n"
-                f"➕ Добавлено дней: {vpn_data['days_added']}\n"
-                f"🕒 Новый срок: {vpn_data['expires_at_human']}"
-            ),parse_mode="HTML")
-
-        return vpn_data
 
 
 

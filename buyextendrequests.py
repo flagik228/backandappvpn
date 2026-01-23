@@ -7,6 +7,7 @@ from urllib.parse import quote
 from xui_api import XUIApi
 from sqlalchemy import select
 import requestsfile as rq
+from main import get_active_order_for_user
 
 
 # СОЗДАНИЕ ЗАКАЗА    
@@ -172,3 +173,80 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
 
         return {"order_id": order.id,"access_data": vpn_data["access_data"],
             "expires_at_human": vpn_data["expires_at_human"],"server_name": server.nameVPN}
+
+
+# ПРОДЛЕНИЕ VPN С БАЛАНСА
+async def extend_vpn_from_balance(tg_id: int, subscription_id: int, tariff_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise Exception("User not found")
+
+        # 🔒 защита от двойных заказов
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise Exception("ACTIVE_ORDER_EXISTS")
+
+        sub = await session.get(VPNSubscription, subscription_id)
+        if not sub or sub.idUser != user.idUser:
+            raise Exception("Subscription not found")
+
+        tariff = await session.get(Tariff, tariff_id)
+        if not tariff or not tariff.is_active:
+            raise Exception("Tariff not found")
+
+        wallet = await session.scalar(
+            select(UserWallet).where(UserWallet.idUser == user.idUser)
+        )
+        if not wallet:
+            raise Exception("Wallet not found")
+
+        price = Decimal(tariff.price_tarif)
+        if wallet.balance_usdt < price:
+            raise Exception("NOT_ENOUGH_BALANCE")
+
+        # 💰 списываем баланс
+        wallet.balance_usdt -= price
+
+        session.add(WalletTransaction(
+            wallet_id=wallet.id,
+            amount=-price,
+            type="extend",
+            description=f"VPN extend ({tariff.days} days)"
+        ))
+
+        # 🧾 создаём order
+        order = Order(
+            idUser=user.idUser,
+            server_id=sub.idServerVPN,
+            idTarif=tariff.idTarif,
+            subscription_id=sub.id,
+            purpose_order="extension",
+            amount=price,
+            currency="USDT",
+            provider="balance",
+            status="processing"
+        )
+        session.add(order)
+        await session.flush()
+
+        session.add(Payment(
+            order_id=order.id,
+            provider="balance",
+            provider_payment_id=f"balance_{order.id}",
+            status="paid"
+        ))
+
+        # 🔁 продлеваем VPN
+        vpn_data = await pay_and_extend_vpn(
+            subscription_id=sub.id,
+            tariff_id=tariff.idTarif
+        )
+
+        order.status = "completed"
+
+        await rq.process_referral_reward(session, order)
+        await session.commit()
+
+        return vpn_data
+
