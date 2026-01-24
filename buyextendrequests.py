@@ -123,7 +123,6 @@ async def remove_vpn_xui(subscription: VPNSubscription):
         except Exception as e:
             raise Exception(f"Не удалось удалить клиента на XUI: {e}")
 
-        # Деактивируем ключ в БД
         subscription.is_active = False
         subscription.status = "expired"
         await session.commit()
@@ -153,7 +152,6 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
             raise Exception("NOT_ENOUGH_BALANCE")
 
         wallet.balance_usdt -= price
-
         tx = WalletTransaction(wallet_id=wallet.id,amount=-price,type="buy",description=f"VPN purchase ({tariff.days} days)")
         session.add(tx)
 
@@ -201,17 +199,10 @@ async def extend_vpn_from_balance(tg_id: int, subscription_id: int, tariff_id: i
         if wallet.balance_usdt < price:
             raise Exception("NOT_ENOUGH_BALANCE")
 
-        # 💰 списываем баланс
         wallet.balance_usdt -= price
 
-        session.add(WalletTransaction(
-            wallet_id=wallet.id,
-            amount=-price,
-            type="extend",
-            description=f"VPN extend ({tariff.days} days)"
-        ))
+        session.add(WalletTransaction(wallet_id=wallet.id,amount=-price,type="extend",description=f"VPN extend ({tariff.days} days)"))
 
-        # 🧾 создаём order
         order = Order(
             idUser=user.idUser,
             server_id=sub.idServerVPN,
@@ -226,18 +217,9 @@ async def extend_vpn_from_balance(tg_id: int, subscription_id: int, tariff_id: i
         session.add(order)
         await session.flush()
 
-        session.add(Payment(
-            order_id=order.id,
-            provider="balance",
-            provider_payment_id=f"balance_{order.id}",
-            status="paid"
-        ))
+        session.add(Payment(order_id=order.id,provider="balance",provider_payment_id=f"balance_{order.id}",status="paid"))
 
-        # 🔁 продлеваем VPN
-        vpn_data = await pay_and_extend_vpn(
-            subscription_id=sub.id,
-            tariff_id=tariff.idTarif
-        )
+        vpn_data = await pay_and_extend_vpn(subscription_id=sub.id,tariff_id=tariff.idTarif)
 
         order.status = "completed"
 

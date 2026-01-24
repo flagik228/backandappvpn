@@ -705,8 +705,7 @@ async def create_yookassa_invoice(data: YooKassaInvoiceRequest):
         session.add(order)
         await session.flush()
 
-        payment_id, confirmation_url = await ykrq.create_yookassa_payment(order.id,price_rub,
-            f"Buy VPN {tariff.days} дней, idUser: {user.idUser}")
+        payment_id, confirmation_url = await ykrq.create_yookassa_payment(order.id,price_rub,f"Buy VPN {tariff.days} дней, idUser: {user.idUser}")
         order.payment_url = confirmation_url
 
         payment = Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending")
@@ -745,9 +744,7 @@ async def renew_yookassa_invoice(data: RenewYooKassaInvoiceRequest):
                 }
             )
 
-        rate = await session.scalar(
-            select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT")
-        )
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT"))
         if not rate:
             raise HTTPException(500, "RUB rate not set")
 
@@ -768,27 +765,14 @@ async def renew_yookassa_invoice(data: RenewYooKassaInvoiceRequest):
         session.add(order)
         await session.flush()
 
-        payment_id, confirmation_url = await ykrq.create_yookassa_payment(
-            order.id,
-            price_rub,
-            f"Renew VPN {tariff.days} days"
-        )
+        payment_id, confirmation_url = await ykrq.create_yookassa_payment(order.id,price_rub,f"Renew VPN {tariff.days} days")
 
         order.payment_url = confirmation_url
-        session.add(Payment(
-            order_id=order.id,
-            provider="yookassa",
-            provider_payment_id=payment_id,
-            status="pending"
-        ))
+        session.add(Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending"))
 
         await session.commit()
 
-        return {
-            "confirmation_url": confirmation_url,
-            "order_id": order.id,
-            "amount_rub": str(price_rub)
-        }
+        return {"confirmation_url": confirmation_url,"order_id": order.id,"amount_rub": str(price_rub)}
 
 
 
@@ -813,11 +797,7 @@ async def yookassa_webhook(request: Request):
 
         order.status = "processing"
 
-        payment = await session.scalar(
-            select(Payment)
-            .where(Payment.provider == "yookassa")
-            .where(Payment.provider_payment_id == payment_obj.id)
-        )
+        payment = await session.scalar(select(Payment).where(Payment.provider == "yookassa").where(Payment.provider_payment_id == payment_obj.id))
         if payment:
             payment.status = "paid"
 
@@ -827,40 +807,29 @@ async def yookassa_webhook(request: Request):
 
         try:
             if order.purpose_order == "buy":
-                vpn_data = await berq.create_vpn_xui(
-                    user_id=user.idUser,
-                    server_id=order.server_id,
-                    tariff_days=tariff.days
-                )
+                vpn_data = await berq.create_vpn_xui(user_id=user.idUser,server_id=order.server_id,tariff_days=tariff.days)
 
                 order.subscription_id = vpn_data["subscription_id"]
 
-                await bot.send_message(
-                    chat_id=user.tg_id,
+                await bot.send_message(chat_id=user.tg_id,
                     text=(
                         f"✅ <b>VPN готов!</b>\n"
                         f"Сервер: {server.nameVPN}\n"
                         f"Действует до: {vpn_data['expires_at_human']}\n\n"
                         f"<b>Ваш ключ:</b>\n"
                         f"<code>{vpn_data['access_data']}</code>"
-                    ),
-                    parse_mode="HTML"
+                    ),parse_mode="HTML"
                 )
 
             elif order.purpose_order == "extension":
-                vpn_data = await berq.pay_and_extend_vpn(
-                    subscription_id=order.subscription_id,
-                    tariff_id=order.idTarif
-                )
+                vpn_data = await berq.pay_and_extend_vpn(subscription_id=order.subscription_id,tariff_id=order.idTarif)
 
-                await bot.send_message(
-                    chat_id=user.tg_id,
+                await bot.send_message(chat_id=user.tg_id,
                     text=(
                         f"♻️ <b>VPN успешно продлён!</b>\n"
                         f"➕ Добавлено дней: {vpn_data['days_added']}\n"
                         f"🕒 Новый срок: {vpn_data['expires_at_human']}"
-                    ),
-                    parse_mode="HTML"
+                    ),parse_mode="HTML"
                 )
 
             order.status = "completed"
