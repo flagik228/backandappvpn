@@ -193,6 +193,9 @@ async def extend_vpn_from_balance(tg_id: int, subscription_id: int, tariff_id: i
         tariff = await session.get(Tariff, tariff_id)
         if not tariff or not tariff.is_active:
             raise Exception("Tariff not found")
+        if tariff.server_id != sub.idServerVPN:
+            raise Exception("TARIFF_NOT_ALLOWED_FOR_THIS_VPN")
+
 
         wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.idUser))
         if not wallet:
@@ -246,4 +249,3 @@ async def extend_vpn_from_balance(tg_id: int, subscription_id: int, tariff_id: i
         await session.commit()
 
         return vpn_data
-
