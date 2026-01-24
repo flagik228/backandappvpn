@@ -750,10 +750,7 @@ async def renew_yookassa_invoice(data: RenewYooKassaInvoiceRequest):
 
         price_rub = Decimal(tariff.price_tarif) * Decimal(rate.rate)
 
-        order = Order(
-            idUser=user.idUser,
-            server_id=sub.idServerVPN,
-            idTarif=tariff.idTarif,
+        order = Order(idUser=user.idUser,server_id=sub.idServerVPN,idTarif=tariff.idTarif,
             subscription_id=sub.id,
             purpose_order="extension",
             amount=Decimal(tariff.price_tarif),
