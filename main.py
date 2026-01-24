@@ -886,7 +886,6 @@ class BuyFromBalanceRequest(BaseModel):
 async def buy_from_balance(data: BuyFromBalanceRequest):
     try:
         result = await berq.buy_vpn_from_balance(tg_id=data.tg_id,tariff_id=data.tariff_id)
-        
         await bot.send_message(chat_id=data.tg_id,
             text=(
                 f"✅ <b>VPN готов!</b>\n"
@@ -896,7 +895,6 @@ async def buy_from_balance(data: BuyFromBalanceRequest):
                 f"<code>{result['access_data']}</code>"
             ),parse_mode="HTML"
         )
-        
         return result
 
     except Exception as e:
@@ -914,7 +912,16 @@ class RenewFromBalanceRequest(BaseModel):
 @app.post("/api/vpn/renew-from-balance")
 async def renew_from_balance(data: RenewFromBalanceRequest):
     try:
-        return await berq.extend_vpn_from_balance(tg_id=data.tg_id,subscription_id=data.subscription_id,tariff_id=data.tariff_id)
+        result = berq.extend_vpn_from_balance(tg_id=data.tg_id,subscription_id=data.subscription_id,tariff_id=data.tariff_id)
+        await bot.send_message(chat_id=data.tg_id,
+            text=(
+                f"♻️ <b>VPN успешно продлён!</b>\n"
+                f"➕ Добавлено дней: {result['days_added']}\n"
+                f"🕒 Новый срок: {result['expires_at_human']}"
+            ),parse_mode="HTML"
+        )
+        return result
+    
     except Exception as e:
         if str(e) == "NOT_ENOUGH_BALANCE":
             raise HTTPException(400, "NOT_ENOUGH_BALANCE")

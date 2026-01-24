@@ -123,9 +123,7 @@ async def has_active_subscription(tg_id: int) -> bool:
         if not user:
             return False
 
-        q = select(exists().where(VPNSubscription.idUser == user.idUser,VPNSubscription.is_active == True,
-                VPNSubscription.expires_at > datetime.now(timezone.utc))
-        )
+        q = select(exists().where(VPNSubscription.idUser == user.idUser,VPNSubscription.is_active == True,VPNSubscription.expires_at > datetime.now(timezone.utc)))
 
         return bool(await session.scalar(q))
 
