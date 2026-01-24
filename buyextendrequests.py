@@ -182,10 +182,6 @@ async def extend_vpn_from_balance(tg_id: int, subscription_id: int, tariff_id: i
         if not user:
             raise Exception("User not found")
 
-        active = await main.get_active_order_for_user(session, user.idUser)
-        if active:
-            raise Exception("ACTIVE_ORDER_EXISTS")
-
         sub = await session.get(VPNSubscription, subscription_id)
         if not sub or sub.idUser != user.idUser:
             raise Exception("Subscription not found")
