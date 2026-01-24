@@ -878,7 +878,7 @@ class RenewFromBalanceRequest(BaseModel):
 @app.post("/api/vpn/renew-from-balance")
 async def renew_from_balance(data: RenewFromBalanceRequest):
     try:
-        result = berq.extend_vpn_from_balance(tg_id=data.tg_id,subscription_id=data.subscription_id,tariff_id=data.tariff_id)
+        result = await berq.extend_vpn_from_balance(tg_id=data.tg_id,subscription_id=data.subscription_id,tariff_id=data.tariff_id)
         await bot.send_message(chat_id=data.tg_id,
             text=(
                 f"♻️ <b>VPN успешно продлён!</b>\n"
