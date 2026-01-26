@@ -56,20 +56,34 @@ async def get_server_by_id(server_id: int):
         
 async def get_servers_full():
     async with async_session() as session:
-        servers = await session.scalars(select(ServersVPN).where(ServersVPN.is_active == True))
+        rows = await session.execute(
+            select(ServersVPN, TypesVPN, CountriesVPN)
+            .join(TypesVPN, ServersVPN.idTypeVPN == TypesVPN.idTypeVPN, isouter=True)
+            .join(CountriesVPN, ServersVPN.idCountry == CountriesVPN.idCountry, isouter=True)
+            .where(ServersVPN.is_active == True)
+        )
+        servers = rows.all()
+        server_ids = [s.idServerVPN for s, _, _ in servers]
+        tariffs = []
+        if server_ids:
+            tariffs = await session.scalars(
+                select(Tariff)
+                .where(Tariff.server_id.in_(server_ids), Tariff.is_active == True)
+            )
+        tariffs_map = {}
+        for t in tariffs:
+            tariffs_map.setdefault(t.server_id, []).append(t)
+
         rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
         rate_val = rate.rate if rate else Decimal("1")
 
         result = []
-        for s in servers:
-            tariffs_rows = await session.scalars(select(Tariff).where(Tariff.server_id == s.idServerVPN, Tariff.is_active == True))
+        for s, type_vpn, country in servers:
+            tariffs_rows = tariffs_map.get(s.idServerVPN, [])
             tariffs_list = []
             for t in tariffs_rows:
                 tariffs_list.append({"idTarif": t.idTarif,"days": t.days,
                     "price_usdt": str(t.price_tarif),"price_stars": int(t.price_tarif / rate_val)})
-
-            type_vpn = await session.get(TypesVPN, s.idTypeVPN)
-            country = await session.get(CountriesVPN, s.idCountry)
 
             result.append({"idServerVPN": s.idServerVPN,"nameVPN": s.nameVPN,"type_vpn": type_vpn.nameType if type_vpn else "",
                 "type_description": type_vpn.descriptionType if type_vpn else "","country": country.nameCountry if country else "","tariffs": tariffs_list})

@@ -66,6 +66,9 @@ class WalletOperation(Base):
     provider: Mapped[str] = mapped_column(String(50)) # stars / cryptobot / yukassa
     meta: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    __table_args__ = (
+        Index("idx_wallet_ops_user_status", "idUser", "status"),
+    )
     
     payments = relationship("Payment", back_populates="wallet_operation")
     
@@ -178,7 +181,10 @@ class Order(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     
-    __table_args__ = (Index("idx_orders_status_expires", "status", "expires_at"),)
+    __table_args__ = (
+        Index("idx_orders_status_expires", "status", "expires_at"),
+        Index("idx_orders_user_status", "idUser", "status"),
+    )
 
 
     # оплата заказа
@@ -191,6 +197,9 @@ class Payment(Base):
     provider_payment_id: Mapped[str] = mapped_column(String(200))   # ID платежа у платёжного провайдера.
     status: Mapped[str] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    __table_args__ = (
+        Index("idx_payment_provider_id", "provider", "provider_payment_id"),
+    )
     
     wallet_operation = relationship("WalletOperation", back_populates="payments")
 
@@ -212,6 +221,9 @@ class VPNSubscription(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(30), default="active")  # active / expired
+    __table_args__ = (
+        Index("idx_vpn_user_expires", "idUser", "expires_at"),
+    )
 
 
 # --- REFERALS ---
