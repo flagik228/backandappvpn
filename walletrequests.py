@@ -103,11 +103,19 @@ async def create_yookassa_deposit(tg_id: int, amount_usdt: Decimal):
 # =========================
 # Завершение пополнения
 async def complete_wallet_deposit(session, wallet_operation_id: int):
-    op = await session.get(WalletOperation, wallet_operation_id)
+    op = await session.scalar(
+        select(WalletOperation)
+        .where(WalletOperation.id == wallet_operation_id)
+        .with_for_update()
+    )
     if not op or op.status != "pending":
         return
 
-    wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == op.idUser))
+    wallet = await session.scalar(
+        select(UserWallet)
+        .where(UserWallet.idUser == op.idUser)
+        .with_for_update()
+    )
 
     wallet.balance_usdt += op.amount_usdt
     op.status = "completed"

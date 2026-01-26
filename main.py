@@ -27,6 +27,7 @@ import adminrequests as rqadm
 from cryptopay_client import crypto
 from scheduler import start_scheduler
 
+logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_PATH = "/webhook"
@@ -424,7 +425,11 @@ async def successful_payment(message: Message):
     if prefix == "wallet":
         async with async_session() as session:
             op = await session.get(WalletOperation, entity_id)
-            if not op or op.status != "pending":
+            if not op:
+                logger.warning("Stars wallet op not found: %s", entity_id)
+                return
+            if op.status != "pending":
+                logger.info("Stars wallet op already handled: %s status=%s", op.id, op.status)
                 return
 
             payment = Payment(wallet_operation_id=op.id,provider="telegram_stars",
@@ -434,6 +439,7 @@ async def successful_payment(message: Message):
             await wrq.complete_wallet_deposit(session, op.id)
             await session.commit()
 
+        logger.info("Stars wallet completed: op_id=%s payment_id=%s", entity_id, provider_payment_id)
         await message.answer("✅ Баланс успешно пополнен!")
         return
 
@@ -443,7 +449,11 @@ async def successful_payment(message: Message):
 
     async with async_session() as session:
         order = await session.get(Order, entity_id)
-        if not order or order.status != "pending":
+        if not order:
+            logger.warning("Stars order not found: %s", entity_id)
+            return
+        if order.status != "pending":
+            logger.info("Stars order already handled: %s status=%s", order.id, order.status)
             return
 
         order.status = "paid"
@@ -467,12 +477,14 @@ async def successful_payment(message: Message):
         except Exception as e:
             order.status = "failed"
             await session.commit()
+            logger.exception("Stars order failed: %s error=%s", order.id, e)
             await message.answer(f"❌ Ошибка создания VPN: {e}")
             return
 
         order.status = "completed"
         await rq.process_referral_reward(session, order)
         await session.commit()
+        logger.info("Stars order completed: %s payment_id=%s", order.id, provider_payment_id)
 
         if order.purpose_order == "buy":
             await message.answer(
@@ -609,7 +621,11 @@ async def crypto_webhook(data: dict):
 
     async with async_session() as session:
         payment = await session.scalar(select(Payment).where(Payment.provider == "cryptobot",Payment.provider_payment_id == invoice_id))
-        if not payment or payment.status == "paid":
+        if not payment:
+            logger.warning("Cryptobot payment not found: %s", invoice_id)
+            return {"ok": True}
+        if payment.status == "paid":
+            logger.info("Cryptobot payment already handled: %s", invoice_id)
             return {"ok": True}
 
         payment.status = "paid"
@@ -617,12 +633,17 @@ async def crypto_webhook(data: dict):
         # ПОПОЛНЕНИЕ БАЛАНСА
         if prefix == "wallet":
             op = await session.get(WalletOperation, entity_id)
-            if not op or op.status != "pending":
+            if not op:
+                logger.warning("Cryptobot wallet op not found: %s", entity_id)
+                return {"ok": True}
+            if op.status != "pending":
+                logger.info("Cryptobot wallet op already handled: %s status=%s", op.id, op.status)
                 return {"ok": True}
             
             user = await session.get(User, op.idUser)
             await wrq.complete_wallet_deposit(session, op.id)
             await session.commit()
+            logger.info("Cryptobot wallet completed: op_id=%s payment_id=%s", op.id, invoice_id)
             await bot.send_message(chat_id=user.tg_id,text=("✅ Баланс успешно пополнен!"))
             
             return {"ok": True}
@@ -630,7 +651,11 @@ async def crypto_webhook(data: dict):
         # ПРОДЛЕНИЕ VPN
         if prefix == "renew":
             order = await session.get(Order, entity_id)
-            if not order or order.status != "pending":
+            if not order:
+                logger.warning("Cryptobot order not found: %s", entity_id)
+                return {"ok": True}
+            if order.status != "pending":
+                logger.info("Cryptobot order already handled: %s status=%s", order.id, order.status)
                 return {"ok": True}
 
             order.status = "processing"
@@ -643,11 +668,13 @@ async def crypto_webhook(data: dict):
             except Exception:
                 order.status = "failed"
                 await session.commit()
+                logger.exception("Cryptobot renew failed: %s", order.id)
                 return {"ok": True}
 
             order.status = "completed"
             await rq.process_referral_reward(session, order)
             await session.commit()
+            logger.info("Cryptobot renew completed: %s payment_id=%s", order.id, invoice_id)
 
             await bot.send_message(chat_id=user.tg_id,
                 text=(
@@ -662,7 +689,11 @@ async def crypto_webhook(data: dict):
         # ПОКУПКА VPN
         if prefix == "buy":
             order = await session.get(Order, entity_id)
-            if not order or order.status != "pending":
+            if not order:
+                logger.warning("Cryptobot order not found: %s", entity_id)
+                return {"ok": True}
+            if order.status != "pending":
+                logger.info("Cryptobot order already handled: %s status=%s", order.id, order.status)
                 return {"ok": True}
 
             order.status = "processing"
@@ -676,11 +707,13 @@ async def crypto_webhook(data: dict):
             except Exception:
                 order.status = "failed"
                 await session.commit()
+                logger.exception("Cryptobot buy failed: %s", order.id)
                 return {"ok": True}
 
             order.status = "completed"
             await rq.process_referral_reward(session, order)
             await session.commit()
+            logger.info("Cryptobot buy completed: %s payment_id=%s", order.id, invoice_id)
 
             await bot.send_message(chat_id=user.tg_id,
                 text=(
@@ -798,7 +831,6 @@ async def renew_yookassa_invoice(data: RenewYooKassaInvoiceRequest):
 
 
 # юkassa webhoock
-logger = logging.getLogger(__name__)
 
 @app.post("/api/yookassa/webhook")
 async def yookassa_webhook(request: Request):
@@ -819,7 +851,11 @@ async def yookassa_webhook(request: Request):
     async with async_session() as session:
         if purpose == "wallet":
             op = await session.get(WalletOperation, order_id)
-            if not op or op.status != "pending":
+            if not op:
+                logger.warning("YooKassa wallet op not found: %s", order_id)
+                return {"ok": True}
+            if op.status != "pending":
+                logger.info("YooKassa wallet op already handled: %s status=%s", op.id, op.status)
                 return {"ok": True}
 
             payment = await session.scalar(select(Payment).where(Payment.provider == "yookassa").where(Payment.provider_payment_id == payment_obj.id))
@@ -830,11 +866,16 @@ async def yookassa_webhook(request: Request):
             await wrq.complete_wallet_deposit(session, op.id)
             await session.commit()
 
+            logger.info("YooKassa wallet completed: op_id=%s payment_id=%s", op.id, payment_obj.id)
             await bot.send_message(chat_id=user.tg_id,text=("✅ Баланс успешно пополнен!"))
             return {"ok": True}
 
         order = await session.get(Order, order_id)
-        if not order or order.status != "pending":
+        if not order:
+            logger.warning("YooKassa order not found: %s", order_id)
+            return {"ok": True}
+        if order.status != "pending":
+            logger.info("YooKassa order already handled: %s status=%s", order.id, order.status)
             return {"ok": True}
 
         order.status = "processing"
@@ -877,12 +918,13 @@ async def yookassa_webhook(request: Request):
             order.status = "completed"
             await rq.process_referral_reward(session, order)
             await session.commit()
+            logger.info("YooKassa order completed: %s payment_id=%s", order.id, payment_obj.id)
             return {"ok": True}
 
         except Exception as e:
             order.status = "failed"
             await session.commit()
-            logger.exception(f"YooKassa webhook error: {e}")
+            logger.exception("YooKassa webhook error: %s order=%s", e, order.id)
             return {"ok": True}
 
 
