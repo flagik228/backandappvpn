@@ -351,6 +351,30 @@ async def wallet_deposit_stars(data: WalletDepositRequest):
     )
     return {"invoice_link": invoice_link,"order_id": result["wallet_operation_id"],"stars": result["stars_amount"]}
 
+@app.post("/api/wallet/deposit/yookassa")
+async def wallet_deposit_yookassa(data: WalletDepositRequest):
+    async with async_session() as session:
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT"))
+        if not rate:
+            raise HTTPException(500, "RUB rate not set")
+
+    result = await wrq.create_yookassa_deposit(data.tg_id,Decimal(data.amount_usdt))
+    amount_rub = Decimal(data.amount_usdt) * Decimal(rate.rate)
+
+    payment_id, confirmation_url = await ykrq.create_yookassa_payment(
+        result["wallet_operation_id"],
+        amount_rub,
+        f"Wallet top-up {data.amount_usdt} USDT",
+        metadata={"purpose": "wallet"}
+    )
+
+    async with async_session() as session:
+        session.add(Payment(wallet_operation_id=result["wallet_operation_id"],provider="yookassa",
+            provider_payment_id=payment_id,status="pending"))
+        await session.commit()
+
+    return {"confirmation_url": confirmation_url,"order_id": result["wallet_operation_id"],"amount_rub": str(amount_rub)}
+
 
 
 # --- Создание заказа по Stars --- 
@@ -785,9 +809,30 @@ async def yookassa_webhook(request: Request):
         return {"ok": True}
 
     payment_obj = notification.object
-    order_id = int(payment_obj.metadata.get("order_id"))
+    metadata = payment_obj.metadata or {}
+    purpose = metadata.get("purpose")
+    try:
+        order_id = int(metadata.get("order_id"))
+    except (TypeError, ValueError):
+        return {"ok": True}
 
     async with async_session() as session:
+        if purpose == "wallet":
+            op = await session.get(WalletOperation, order_id)
+            if not op or op.status != "pending":
+                return {"ok": True}
+
+            payment = await session.scalar(select(Payment).where(Payment.provider == "yookassa").where(Payment.provider_payment_id == payment_obj.id))
+            if payment:
+                payment.status = "paid"
+
+            user = await session.get(User, op.idUser)
+            await wrq.complete_wallet_deposit(session, op.id)
+            await session.commit()
+
+            await bot.send_message(chat_id=user.tg_id,text=("✅ Баланс успешно пополнен!"))
+            return {"ok": True}
+
         order = await session.get(Order, order_id)
         if not order or order.status != "pending":
             return {"ok": True}
