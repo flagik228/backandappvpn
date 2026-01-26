@@ -36,6 +36,56 @@ async def get_user_wallet(tg_id: int):
         return {"balance_usdt": str(wallet.balance_usdt)}
 
 
+async def get_user_history(tg_id: int, limit: int = 200):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            return []
+
+        wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user.idUser))
+
+        orders = (await session.scalars(
+            select(Order)
+            .where(Order.idUser == user.idUser)
+            .order_by(Order.created_at.desc())
+            .limit(limit)
+        )).all()
+
+        wallet_txs = []
+        if wallet:
+            wallet_txs = (await session.scalars(
+                select(WalletTransaction)
+                .where(WalletTransaction.wallet_id == wallet.id)
+                .order_by(WalletTransaction.created_at.desc())
+                .limit(limit)
+            )).all()
+
+        items = []
+        for o in orders:
+            items.append((o.created_at, {
+                "id": o.id,
+                "source": "order",
+                "purpose": o.purpose_order,
+                "status": o.status,
+                "amount_usdt": str(o.amount),
+                "created_at": o.created_at.isoformat()
+            }))
+
+        for t in wallet_txs:
+            items.append((t.created_at, {
+                "id": t.id,
+                "source": "wallet",
+                "purpose": t.type,
+                "status": "completed",
+                "amount_usdt": str(t.amount),
+                "description": t.description,
+                "created_at": t.created_at.isoformat()
+            }))
+
+        items.sort(key=lambda x: x[0], reverse=True)
+        return [item for _, item in items[:limit]]
+
+
 # SERVERS x tarifs
 async def get_servers() -> List[dict]:
     async with async_session() as session:

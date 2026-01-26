@@ -126,6 +126,11 @@ async def get_wallet(tg_id: int):
     return wallet
 
 
+@app.get("/api/user/history/{tg_id}")
+async def get_user_history(tg_id: int):
+    return await rq.get_user_history(tg_id)
+
+
 ORDER_ACTIVE_STATUSES = ("pending", "processing")
 ORDER_TTL_MINUTES = 10
 
