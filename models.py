@@ -107,6 +107,35 @@ class UserReward(Base):
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class UserFreeDaysBalance(Base):
+    __tablename__ = "user_free_days_balance"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"), unique=True)
+    balance_days: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class UserRewardOp(Base):
+    __tablename__ = "user_reward_ops"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"))
+    source: Mapped[str] = mapped_column(String(50))  # task / referral / checkin / exchange / activate
+    days_delta: Mapped[int] = mapped_column(Integer)
+    meta: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    __table_args__ = (
+        Index("idx_reward_ops_user_created", "idUser", "created_at"),
+    )
+
+
+class UserCheckin(Base):
+    __tablename__ = "user_checkins"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"), unique=True)
+    checkin_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_checkin_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 # --- VPN ---
 class TypesVPN(Base):
     __tablename__ = "types_vpn"

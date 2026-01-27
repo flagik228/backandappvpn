@@ -110,6 +110,9 @@ async def register_user(data: RegisterUser):
         await session.flush()
         session.add(UserWallet(idUser=user.idUser))
 
+        if referrer_id:
+            await rq.add_free_days(session, referrer_id, 1, "referral_signup", meta=f"referred_user:{user.idUser}")
+
         if start:
             await session.delete(start)
 
@@ -1106,6 +1109,42 @@ async def activate_reward_api(tg_id: int, reward_id: int, server_id: int):
     await taskrq.activate_reward(user.idUser, reward_id, server_id)
 
     return {"status": "ok"}
+
+
+@app.get("/api/free-days/{tg_id}")
+async def get_free_days(tg_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+    return await taskrq.get_free_days_data(user.idUser)
+
+
+@app.post("/api/checkin")
+async def checkin(tg_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+    return await taskrq.perform_checkin(user.idUser)
+
+
+@app.post("/api/checkin/exchange")
+async def exchange_checkins(tg_id: int, checkins: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+    return await taskrq.exchange_checkins(user.idUser, checkins)
+
+
+@app.post("/api/free-days/activate")
+async def activate_free_days(tg_id: int, server_id: int, days: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+    return await taskrq.activate_free_days(user.idUser, server_id, days)
 
 
 

@@ -1,11 +1,11 @@
 from sqlalchemy import select, exists
-from sqlalchemy.exc import NoResultFound
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
 from models import async_session, User, Order, UserTask, UserReward, VPNSubscription, ServersVPN
-import buyextendrequests as berq
 from xui_api import XUIApi
+from urllib.parse import quote
+import requestsfile as rq
 
 
 TASKS = [
@@ -67,11 +67,7 @@ async def check_and_complete_task(user: User, task: dict):
             task_key=task["key"]
         ))
 
-        session.add(UserReward(
-            idUser=user.idUser,
-            reward_type="vpn_days",
-            days=task["reward_days"]
-        ))
+        await rq.add_free_days(session, user.idUser, task["reward_days"], "task", meta=task["key"])
 
         await session.commit()
         return {"status": "completed"}
@@ -93,57 +89,176 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
         if reward.is_activated:
             raise HTTPException(400, "Reward already activated")
 
-        server = await session.get(ServersVPN, server_id)
-        if not server:
-            raise HTTPException(404, "Server not found")
+        result = await _apply_free_days_to_subscription(session, user_id, server_id, reward.days)
 
-        vpn_key = await session.scalar(select(VPNSubscription).where(
-                VPNSubscription.idUser == user_id,
-                VPNSubscription.idServerVPN == server_id
-            )
-        )
-
-        now = datetime.now(timezone.utc)
-        
-        # ===== EXTEND =====
-        if vpn_key:
-            xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
-            inbound = await xui.get_inbound_by_port(server.inbound_port)
-
-            await xui.extend_client(
-                inbound_id=inbound.id,
-                client_email=vpn_key.provider_client_email,
-                days=reward.days
-            )
-
-            if vpn_key.expires_at and vpn_key.expires_at > now:
-                vpn_key.expires_at = vpn_key.expires_at + timedelta(days=reward.days)
-            else:
-                vpn_key.expires_at = now + timedelta(days=reward.days)
-
-            vpn_key.is_active = True
-
-            sub = await session.scalar(
-                select(VPNSubscription)
-                .where(VPNSubscription.vpn_key_id == vpn_key.id)
-            )
-
-            if sub:
-                sub.expires_at = vpn_key.expires_at
-                sub.status = "active"
-
-        # ===== CREATE =====
-        else:
-            await berq.create_vpn_xui(
-                user_id=user_id,
-                server_id=server_id,
-                tariff_days=reward.days
-            )
-
-        # ✅ ПОМЕЧАЕМ НАГРАДУ ИСПОЛЬЗОВАННОЙ
         reward.is_activated = True
         reward.activated_server_id = server_id
         reward.activated_at = datetime.utcnow()
 
-        # 🔥 ВАЖНО
         await session.commit()
+        return {"mode": result["mode"], "subscription_id": result["subscription"].id}
+
+
+async def _apply_free_days_to_subscription(session, user_id: int, server_id: int, days: int):
+    server = await session.get(ServersVPN, server_id)
+    if not server:
+        raise HTTPException(404, "Server not found")
+
+    sub = await session.scalar(select(VPNSubscription)
+        .where(VPNSubscription.idUser == user_id, VPNSubscription.idServerVPN == server_id)
+        .order_by(VPNSubscription.created_at.desc())
+    )
+
+    now = datetime.now(timezone.utc)
+
+    if sub:
+        xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
+        inbound = await xui.get_inbound_by_port(server.inbound_port)
+        if not inbound:
+            raise HTTPException(500, "Inbound not found")
+
+        await xui.extend_client(inbound_id=inbound.id, client_email=sub.provider_client_email, days=days)
+
+        if sub.expires_at and sub.expires_at > now:
+            sub.expires_at = sub.expires_at + timedelta(days=days)
+        else:
+            sub.expires_at = now + timedelta(days=days)
+
+        sub.is_active = True
+        sub.status = "active"
+        await rq.recalc_server_load(session, server_id)
+        return {"mode": "extend", "subscription": sub}
+
+    xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
+    client_email = await rq.generate_unique_client_email(session, user_id, server, xui)
+    inbound = await xui.get_inbound_by_port(server.inbound_port)
+    if not inbound:
+        raise HTTPException(500, "Inbound not found")
+
+    client = await xui.add_client(inbound_id=inbound.id, email=client_email, days=days)
+    uuid = client["uuid"]
+
+    stream = inbound.stream_settings
+    reality = stream.reality_settings
+    public_key = reality["settings"]["publicKey"]
+    server_name = reality["serverNames"][0]
+    short_id = reality["shortIds"][0]
+
+    query = {"type": stream.network, "security": stream.security, "pbk": public_key,
+        "fp": "chrome", "sni": server_name, "sid": short_id}
+    query_str = "&".join(f"{k}={quote(str(v))}" for k, v in query.items())
+
+    access_link = (
+        f"vless://{uuid}@{server.server_ip}:{server.inbound_port}"
+        f"?{query_str}#{client_email}"
+    )
+
+    expires_at = now + timedelta(days=days)
+
+    sub = VPNSubscription(idUser=user_id, idServerVPN=server_id, provider="xui",
+        provider_client_email=client_email, provider_client_uuid=uuid, access_data=access_link,
+        created_at=now, expires_at=expires_at, is_active=True, status="active")
+
+    session.add(sub)
+    await rq.recalc_server_load(session, server_id)
+    return {"mode": "create", "subscription": sub}
+
+
+async def get_free_days_data(user_id: int):
+    async with async_session() as session:
+        balance = await rq.get_or_create_free_days_balance(session, user_id, for_update=True)
+        checkin = await rq.get_or_create_checkin(session, user_id, for_update=True)
+
+        legacy_rewards = (await session.scalars(select(UserReward)
+            .where(UserReward.idUser == user_id, UserReward.is_activated == False)
+        )).all()
+
+        if legacy_rewards:
+            total = sum(r.days for r in legacy_rewards)
+            for r in legacy_rewards:
+                r.is_activated = True
+                r.activated_at = datetime.utcnow()
+            if total > 0:
+                await rq.add_free_days(session, user_id, total, "legacy_rewards")
+
+        await session.commit()
+        await session.refresh(balance)
+        await session.refresh(checkin)
+
+        exchange_units = checkin.checkin_count // 10
+        return {
+            "free_days": balance.balance_days,
+            "checkin_count": checkin.checkin_count,
+            "exchange_units": exchange_units,
+            "exchange_days": exchange_units,
+            "last_checkin_at": checkin.last_checkin_at.isoformat() if checkin.last_checkin_at else None,
+        }
+
+
+async def perform_checkin(user_id: int):
+    async with async_session() as session:
+        checkin = await rq.get_or_create_checkin(session, user_id, for_update=True)
+        now = datetime.now(timezone.utc)
+        if checkin.last_checkin_at and checkin.last_checkin_at.date() == now.date():
+            raise HTTPException(400, "Already checked in today")
+
+        checkin.checkin_count += 1
+        checkin.last_checkin_at = now
+
+        await session.commit()
+        return {
+            "checkin_count": checkin.checkin_count,
+            "last_checkin_at": checkin.last_checkin_at.isoformat(),
+        }
+
+
+async def exchange_checkins(user_id: int, checkins: int):
+    if checkins <= 0:
+        raise HTTPException(400, "Check-ins must be positive")
+    async with async_session() as session:
+        checkin = await rq.get_or_create_checkin(session, user_id, for_update=True)
+        if checkins > checkin.checkin_count:
+            raise HTTPException(400, "Not enough check-ins")
+
+        units = checkins // 10
+        if units <= 0:
+            raise HTTPException(400, "Not enough check-ins")
+
+        if units > (checkin.checkin_count // 10):
+            raise HTTPException(400, "Not enough check-ins")
+
+        checkin.checkin_count -= units * 10
+        await rq.add_free_days(session, user_id, units, "checkin_exchange", meta=f"checkins:{checkins}")
+
+        await session.commit()
+        return {
+            "checkin_count": checkin.checkin_count,
+            "free_days_added": units,
+        }
+
+
+async def activate_free_days(user_id: int, server_id: int, days: int):
+    if days <= 0:
+        raise HTTPException(400, "Days must be positive")
+    async with async_session() as session:
+        balance = await rq.get_or_create_free_days_balance(session, user_id, for_update=True)
+        if balance.balance_days < days:
+            raise HTTPException(400, "Not enough free days")
+
+        result = await _apply_free_days_to_subscription(session, user_id, server_id, days)
+        try:
+            await rq.deduct_free_days(session, user_id, days, "activate", meta=f"server_id:{server_id}")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+        await session.commit()
+        await session.refresh(balance)
+
+        sub = result["subscription"]
+        return {
+            "mode": result["mode"],
+            "subscription_id": sub.id,
+            "expires_at": sub.expires_at.isoformat(),
+            "expires_at_human": rq.format_datetime_ru(sub.expires_at),
+            "free_days_left": balance.balance_days,
+        }

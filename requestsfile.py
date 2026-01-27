@@ -1,6 +1,7 @@
 from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletOperation, WalletTransaction, VPNSubscription, TypesVPN,
-    CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning)
+    CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
+    UserFreeDaysBalance, UserRewardOp, UserCheckin)
 from typing import List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -21,9 +22,61 @@ async def add_user(tg_id: int, user_role: str = "user", referrer_id: int | None 
         await session.flush()
         wallet = UserWallet(idUser=user.idUser, balance_usdt=Decimal("0.00"))
         session.add(wallet)
+
+        if referrer_id:
+            referrer = await session.get(User, referrer_id)
+            if referrer:
+                await add_free_days(session, referrer.idUser, 1, "referral_signup", meta=f"referred_user:{user.idUser}")
+
         await session.commit()
         await session.refresh(user)
         return user
+
+
+async def get_or_create_free_days_balance(session, user_id: int, for_update: bool = False) -> UserFreeDaysBalance:
+    query = select(UserFreeDaysBalance).where(UserFreeDaysBalance.idUser == user_id)
+    if for_update:
+        query = query.with_for_update()
+    balance = await session.scalar(query)
+    if balance:
+        return balance
+    balance = UserFreeDaysBalance(idUser=user_id, balance_days=0)
+    session.add(balance)
+    await session.flush()
+    return balance
+
+
+async def add_free_days(session, user_id: int, days: int, source: str, meta: str | None = None):
+    if days <= 0:
+        return
+    balance = await get_or_create_free_days_balance(session, user_id, for_update=True)
+    balance.balance_days += days
+    balance.updated_at = datetime.utcnow()
+    session.add(UserRewardOp(idUser=user_id, source=source, days_delta=days, meta=meta))
+
+
+async def deduct_free_days(session, user_id: int, days: int, source: str, meta: str | None = None):
+    if days <= 0:
+        raise ValueError("Days must be positive")
+    balance = await get_or_create_free_days_balance(session, user_id, for_update=True)
+    if balance.balance_days < days:
+        raise ValueError("Not enough free days")
+    balance.balance_days -= days
+    balance.updated_at = datetime.utcnow()
+    session.add(UserRewardOp(idUser=user_id, source=source, days_delta=-days, meta=meta))
+
+
+async def get_or_create_checkin(session, user_id: int, for_update: bool = False) -> UserCheckin:
+    query = select(UserCheckin).where(UserCheckin.idUser == user_id)
+    if for_update:
+        query = query.with_for_update()
+    checkin = await session.scalar(query)
+    if checkin:
+        return checkin
+    checkin = UserCheckin(idUser=user_id, checkin_count=0)
+    session.add(checkin)
+    await session.flush()
+    return checkin
     
 
 async def get_user_wallet(tg_id: int):
