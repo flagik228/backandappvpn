@@ -156,7 +156,7 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
         session.add(tx)
 
         order = Order(idUser=user.idUser,server_id=server.idServerVPN,idTarif=tariff.idTarif,purpose_order="buy",
-            amount=price,currency="USDT",status="processing")
+            amount=price,currency="USDT",provider="balance",status="processing")
         session.add(order)
         await session.flush()
 
