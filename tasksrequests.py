@@ -99,15 +99,26 @@ async def activate_reward(user_id: int, reward_id: int, server_id: int):
         return {"mode": result["mode"], "subscription_id": result["subscription"].id}
 
 
-async def _apply_free_days_to_subscription(session, user_id: int, server_id: int, days: int):
+async def _apply_free_days_to_subscription(session, user_id: int, server_id: int, days: int, subscription_id: int | None = None):
     server = await session.get(ServersVPN, server_id)
     if not server:
         raise HTTPException(404, "Server not found")
 
-    sub = await session.scalar(select(VPNSubscription)
-        .where(VPNSubscription.idUser == user_id, VPNSubscription.idServerVPN == server_id)
-        .order_by(VPNSubscription.created_at.desc())
-    )
+    if subscription_id:
+        sub = await session.scalar(select(VPNSubscription)
+            .where(
+                VPNSubscription.id == subscription_id,
+                VPNSubscription.idUser == user_id,
+                VPNSubscription.idServerVPN == server_id,
+            )
+        )
+        if not sub:
+            raise HTTPException(404, "Subscription not found")
+    else:
+        sub = await session.scalar(select(VPNSubscription)
+            .where(VPNSubscription.idUser == user_id, VPNSubscription.idServerVPN == server_id)
+            .order_by(VPNSubscription.created_at.desc())
+        )
 
     now = datetime.now(timezone.utc)
 
@@ -237,7 +248,7 @@ async def exchange_checkins(user_id: int, checkins: int):
         }
 
 
-async def activate_free_days(user_id: int, server_id: int, days: int):
+async def activate_free_days(user_id: int, server_id: int, days: int, subscription_id: int | None = None):
     if days <= 0:
         raise HTTPException(400, "Days must be positive")
     async with async_session() as session:
@@ -245,7 +256,7 @@ async def activate_free_days(user_id: int, server_id: int, days: int):
         if balance.balance_days < days:
             raise HTTPException(400, "Not enough free days")
 
-        result = await _apply_free_days_to_subscription(session, user_id, server_id, days)
+        result = await _apply_free_days_to_subscription(session, user_id, server_id, days, subscription_id=subscription_id)
         try:
             await rq.deduct_free_days(session, user_id, days, "activate", meta=f"server_id:{server_id}")
         except ValueError as exc:

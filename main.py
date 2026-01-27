@@ -1139,12 +1139,21 @@ async def exchange_checkins(tg_id: int, checkins: int):
 
 
 @app.post("/api/free-days/activate")
-async def activate_free_days(tg_id: int, server_id: int, days: int):
+async def activate_free_days(tg_id: int, server_id: int, days: int, subscription_id: int | None = None):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
         if not user:
             raise HTTPException(404, "User not found")
-    return await taskrq.activate_free_days(user.idUser, server_id, days)
+    return await taskrq.activate_free_days(user.idUser, server_id, days, subscription_id=subscription_id)
+
+
+@app.get("/api/vpn/subscriptions")
+async def get_subscriptions_by_server(tg_id: int, server_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+    return await rq.get_subscriptions_by_server(user.idUser, server_id)
 
 
 

@@ -255,6 +255,37 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
         return result
 
 
+async def get_subscriptions_by_server(user_id: int, server_id: int) -> List[dict]:
+    async with async_session() as session:
+        server = await session.get(ServersVPN, server_id)
+        if not server:
+            return []
+
+        now = datetime.now(timezone.utc)
+        subs = (await session.scalars(
+            select(VPNSubscription)
+            .where(VPNSubscription.idUser == user_id, VPNSubscription.idServerVPN == server_id)
+            .order_by(VPNSubscription.expires_at.desc())
+        )).all()
+
+        result = []
+        for sub in subs:
+            is_active = sub.expires_at > now
+            delta = sub.expires_at - now
+            days_left = max(0, (delta.days + (1 if delta.seconds > 0 else 0)))
+            result.append({
+                "subscription_id": sub.id,
+                "server_id": server.idServerVPN,
+                "server_name": server.nameVPN,
+                "is_active": is_active,
+                "status": "active" if is_active else "expired",
+                "expires_at": sub.expires_at.isoformat(),
+                "expires_at_human": format_datetime_ru(sub.expires_at),
+                "days_left": days_left,
+            })
+        return result
+
+
 async def has_active_subscription(tg_id: int) -> bool:
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
