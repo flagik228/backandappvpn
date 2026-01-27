@@ -1,4 +1,4 @@
-from sqlalchemy import select, exists
+from sqlalchemy import select, exists, func
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
@@ -12,7 +12,7 @@ TASKS = [
     {
         "key": "welcome_bonus",
         "title": "Приветственный бонус ВСЕМ!",
-        "reward_days": 1,
+        "reward_days": 3,
         "check": "check_user_exists"
     },
     {
@@ -20,6 +20,18 @@ TASKS = [
         "title": "Совершить 1 покупку",
         "reward_days": 1,
         "check": "check_has_orders"
+    },
+    {
+        "key": "first_extension",
+        "title": "Совершить 1 продление",
+        "reward_days": 2,
+        "check": "check_has_extensions_1"
+    },
+    {
+        "key": "second_extension",
+        "title": "Совершить 2 продления",
+        "reward_days": 10,
+        "check": "check_has_extensions_2"
     }
 ]
 
@@ -40,6 +52,24 @@ async def check_has_orders(user: User) -> bool:
                     Order.purpose_order == "buy"
                 )))
         )
+
+
+async def _get_extensions_count(user: User) -> int:
+    async with async_session() as session:
+        count = await session.scalar(select(func.count()).select_from(Order).where(
+            Order.idUser == user.idUser,
+            Order.status == "completed",
+            Order.purpose_order == "extension"
+        ))
+        return int(count or 0)
+
+
+async def check_has_extensions_1(user: User) -> bool:
+    return await _get_extensions_count(user) >= 1
+
+
+async def check_has_extensions_2(user: User) -> bool:
+    return await _get_extensions_count(user) >= 2
 
 
 # ---------- Проверка заданий, выдача награды ----------
