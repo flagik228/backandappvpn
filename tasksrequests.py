@@ -1,4 +1,5 @@
 from sqlalchemy import select, exists, func
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
@@ -167,6 +168,19 @@ async def _apply_free_days_to_subscription(session, user_id: int, server_id: int
 
         sub.is_active = True
         sub.status = "active"
+        order = Order(
+            idUser=user_id,
+            server_id=server_id,
+            idTarif=None,
+            subscription_id=sub.id,
+            purpose_order="extension",
+            amount=Decimal("0"),
+            currency="FREE",
+            provider="free_days",
+            status="completed",
+            created_at=now,
+        )
+        session.add(order)
         await rq.recalc_server_load(session, server_id)
         return {"mode": "extend", "subscription": sub}
 
@@ -201,6 +215,20 @@ async def _apply_free_days_to_subscription(session, user_id: int, server_id: int
         created_at=now, expires_at=expires_at, is_active=True, status="active")
 
     session.add(sub)
+    await session.flush()
+    order = Order(
+        idUser=user_id,
+        server_id=server_id,
+        idTarif=None,
+        subscription_id=sub.id,
+        purpose_order="buy",
+        amount=Decimal("0"),
+        currency="FREE",
+        provider="free_days",
+        status="completed",
+        created_at=now,
+    )
+    session.add(order)
     await rq.recalc_server_load(session, server_id)
     return {"mode": "create", "subscription": sub}
 

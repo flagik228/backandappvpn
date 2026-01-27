@@ -199,7 +199,7 @@ class Order(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser"))
     server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN"))
-    idTarif: Mapped[int] = mapped_column(ForeignKey("tariffs.idTarif"))
+    idTarif: Mapped[int | None] = mapped_column(ForeignKey("tariffs.idTarif"), nullable=True)
     subscription_id: Mapped[int | None] = mapped_column(ForeignKey("vpn_subscriptions.id"),nullable=True)
     purpose_order: Mapped[str] = mapped_column(String(100)) # "buy", "extension"
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 6))
