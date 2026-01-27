@@ -51,11 +51,18 @@ async def get_user_history(tg_id: int, limit: int = 200):
             .limit(limit)
         )).all()
 
+        operations = (await session.scalars(
+            select(WalletOperation)
+            .where(WalletOperation.idUser == user.idUser)
+            .order_by(WalletOperation.created_at.desc())
+            .limit(limit)
+        )).all()
+
         wallet_txs = []
         if wallet:
             wallet_txs = (await session.scalars(
                 select(WalletTransaction)
-                .where(WalletTransaction.wallet_id == wallet.id)
+                .where(WalletTransaction.wallet_id == wallet.id, WalletTransaction.type == "referral")
                 .order_by(WalletTransaction.created_at.desc())
                 .limit(limit)
             )).all()
@@ -68,13 +75,27 @@ async def get_user_history(tg_id: int, limit: int = 200):
                 "purpose": o.purpose_order,
                 "status": o.status,
                 "amount_usdt": str(o.amount),
+                "provider": o.provider,
                 "created_at": o.created_at.isoformat()
+            }))
+
+        for op in operations:
+            if op.type != "deposit":
+                continue
+            items.append((op.created_at, {
+                "id": op.id,
+                "source": "wallet_operation",
+                "purpose": op.type,
+                "status": op.status,
+                "amount_usdt": str(op.amount_usdt),
+                "provider": op.provider,
+                "created_at": op.created_at.isoformat()
             }))
 
         for t in wallet_txs:
             items.append((t.created_at, {
                 "id": t.id,
-                "source": "wallet",
+                "source": "wallet_transaction",
                 "purpose": t.type,
                 "status": "completed",
                 "amount_usdt": str(t.amount),
