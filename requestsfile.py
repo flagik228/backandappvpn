@@ -1,5 +1,5 @@
 from sqlalchemy import select, update, delete
-from models import (async_session, User, UserWallet, WalletTransaction, VPNSubscription, TypesVPN,
+from models import (async_session, User, UserWallet, WalletOperation, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning)
 from typing import List
 from datetime import datetime, timezone, timedelta
