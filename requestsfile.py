@@ -330,7 +330,7 @@ def format_datetime_ru(dt: datetime) -> str:
 def build_subscription_url(server: ServersVPN, sub_id: str | None) -> str | None:
     if not sub_id:
         return None
-    scheme = "https"
+    scheme = "http"
     host = None
     if server.api_url:
         parsed = urlparse(server.api_url)
