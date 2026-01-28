@@ -207,7 +207,7 @@ async def get_user_history(tg_id: int, limit: int = 200):
         if wallet:
             wallet_txs = (await session.scalars(
                 select(WalletTransaction)
-                .where(WalletTransaction.wallet_id == wallet.id, WalletTransaction.type == "referral")
+                .where(WalletTransaction.wallet_id == wallet.id, WalletTransaction.type.in_(["referral", "promo"]))
                 .order_by(WalletTransaction.created_at.desc())
                 .limit(limit)
             )).all()
