@@ -330,7 +330,7 @@ def format_datetime_ru(dt: datetime) -> str:
 def build_subscription_url(server: ServersVPN, sub_id: str | None) -> str | None:
     if not sub_id:
         return None
-    scheme = "http"
+    scheme = "https"
     host = None
     if server.api_url:
         parsed = urlparse(server.api_url)
@@ -342,7 +342,8 @@ def build_subscription_url(server: ServersVPN, sub_id: str | None) -> str | None
         host = server.server_ip
     if not host:
         return None
-    return f"{scheme}://{host}:2096/sub/{sub_id}"
+    port = server.subscription_port or 2096
+    return f"{scheme}://{host}:{port}/sub/{sub_id}"
 
 
 # MY VPNs
@@ -360,7 +361,7 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
         for sub, server in rows:
             is_active = sub.expires_at > now
             subscription_url = build_subscription_url(server, sub.subscription_id) or sub.subscription_url
-            result.append({"subscription_id": sub.id,"server_id": server.idServerVPN,"serverName": server.nameVPN,"access_data": sub.access_data,
+            result.append({"subscription_id": sub.id,"server_id": server.idServerVPN,"serverName": server.nameVPN,
                 "subscription_url": subscription_url,"subscription_key": sub.subscription_id,
                 "expires_at": sub.expires_at.isoformat(),"is_active": is_active,"status": "active" if is_active else "expired"})
 

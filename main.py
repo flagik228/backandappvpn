@@ -523,7 +523,7 @@ async def successful_payment(message: Message):
                 f"Сервер: {server.nameVPN}\n"
                 f"Действует до: {vpn_data['expires_at_human']}\n\n"
                 f"<b>Ваша подписка:</b>\n"
-                f"<code>{vpn_data.get('subscription_url') or vpn_data['access_data']}</code>",parse_mode="HTML"
+                f"<code>{vpn_data['subscription_url']}</code>",parse_mode="HTML"
             )
 
         elif order.purpose_order == "extension":
@@ -752,7 +752,7 @@ async def crypto_webhook(data: dict):
                     f"Сервер: {server.nameVPN}\n"
                     f"Действует до: {vpn_data['expires_at_human']}\n\n"
                     f"<b>Ваша подписка:</b>\n"
-                    f"<code>{vpn_data.get('subscription_url') or vpn_data['access_data']}</code>"
+                    f"<code>{vpn_data['subscription_url']}</code>"
                 ),parse_mode="HTML"
             )
 
@@ -931,7 +931,7 @@ async def yookassa_webhook(request: Request):
                         f"Сервер: {server.nameVPN}\n"
                         f"Действует до: {vpn_data['expires_at_human']}\n\n"
                         f"<b>Ваша подписка:</b>\n"
-                        f"<code>{vpn_data.get('subscription_url') or vpn_data['access_data']}</code>"
+                        f"<code>{vpn_data['subscription_url']}</code>"
                     ),parse_mode="HTML"
                 )
 
@@ -976,7 +976,7 @@ async def buy_from_balance(data: BuyFromBalanceRequest):
                 f"Сервер: {result['server_name']}\n"
                 f"Действует до: {result['expires_at_human']}\n\n"
                 f"<b>Ваша подписка:</b>\n"
-                f"<code>{result.get('subscription_url') or result['access_data']}</code>"
+                f"<code>{result['subscription_url']}</code>"
             ),parse_mode="HTML"
         )
         return result
@@ -1386,6 +1386,7 @@ class ServerCreate(BaseModel):
     xui_username: str
     xui_password: str
     inbound_port: int
+    subscription_port: int = 2096
     idTypeVPN: int
     idCountry: int
     is_active: bool
@@ -1550,7 +1551,6 @@ class VPNSubscriptionCreate(BaseModel):
     provider: str
     provider_client_email: str
     provider_client_uuid: str
-    access_data: str
     subscription_id: str | None = None
     subscription_url: str | None = None
     expires_at: datetime
@@ -1564,7 +1564,6 @@ class VPNSubscriptionUpdate(BaseModel):
     status: str | None = None
     provider_client_email: str | None = None
     provider_client_uuid: str | None = None
-    access_data: str | None = None
     subscription_id: str | None = None
     subscription_url: str | None = None
 

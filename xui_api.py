@@ -73,7 +73,8 @@ class XUIApi:
                 email=email,
                 enable=True,
                 expiry_time=expiry_time,
-                sub_id=sub_id
+                sub_id=sub_id,
+                limit_ip=2
             )
         except TypeError:
             new_client = Client(
@@ -88,6 +89,11 @@ class XUIApi:
                     setattr(new_client, "subId", sub_id)
                 except Exception:
                     pass
+            try:
+                setattr(new_client, "limit_ip", 2)
+                setattr(new_client, "limitIp", 2)
+            except Exception:
+                pass
 
         await asyncio.to_thread(self.api.client.add, inbound_id, [new_client])
 
@@ -175,15 +181,32 @@ class XUIApi:
         await asyncio.sleep(0.3)
 
         # создаём нового (С ТЕМ ЖЕ UUID)
-        new_client = Client(
-            id=client_uuid,
-            email=client_email,
-            enable=True,
-            expiry_time=new_expiry,
-            total_gb=0,
-            up=0,
-            down=0
-        )
+        try:
+            new_client = Client(
+                id=client_uuid,
+                email=client_email,
+                enable=True,
+                expiry_time=new_expiry,
+                total_gb=0,
+                up=0,
+                down=0,
+                limit_ip=2
+            )
+        except TypeError:
+            new_client = Client(
+                id=client_uuid,
+                email=client_email,
+                enable=True,
+                expiry_time=new_expiry,
+                total_gb=0,
+                up=0,
+                down=0
+            )
+            try:
+                setattr(new_client, "limit_ip", 2)
+                setattr(new_client, "limitIp", 2)
+            except Exception:
+                pass
 
         inbound.settings.clients.append(new_client)
 

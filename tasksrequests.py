@@ -5,7 +5,7 @@ from fastapi import HTTPException
 
 from models import async_session, User, Order, UserTask, UserReward, VPNSubscription, ServersVPN
 from xui_api import XUIApi
-from urllib.parse import quote
+import uuid as uuid_lib
 import requestsfile as rq
 
 
@@ -190,29 +190,17 @@ async def _apply_free_days_to_subscription(session, user_id: int, server_id: int
     if not inbound:
         raise HTTPException(500, "Inbound not found")
 
-    client = await xui.add_client(inbound_id=inbound.id, email=client_email, days=days)
-    uuid = client["uuid"]
-
-    stream = inbound.stream_settings
-    reality = stream.reality_settings
-    public_key = reality["settings"]["publicKey"]
-    server_name = reality["serverNames"][0]
-    short_id = reality["shortIds"][0]
-
-    query = {"type": stream.network, "security": stream.security, "pbk": public_key,
-        "fp": "chrome", "sni": server_name, "sid": short_id}
-    query_str = "&".join(f"{k}={quote(str(v))}" for k, v in query.items())
-
-    access_link = (
-        f"vless://{uuid}@{server.server_ip}:{server.inbound_port}"
-        f"?{query_str}#{client_email}"
-    )
+    sub_id = uuid_lib.uuid4().hex[:16]
+    client = await xui.add_client(inbound_id=inbound.id, email=client_email, days=days, sub_id=sub_id)
+    client_uuid = client["uuid"]
+    sub_id = client.get("sub_id") or sub_id
 
     expires_at = now + timedelta(days=days)
+    subscription_url = rq.build_subscription_url(server, sub_id)
 
     sub = VPNSubscription(idUser=user_id, idServerVPN=server_id, provider="xui",
-        provider_client_email=client_email, provider_client_uuid=uuid, access_data=access_link,
-        created_at=now, expires_at=expires_at, is_active=True, status="active")
+        provider_client_email=client_email, provider_client_uuid=client_uuid, subscription_id=sub_id,
+        subscription_url=subscription_url, created_at=now, expires_at=expires_at, is_active=True, status="active")
 
     session.add(sub)
     await session.flush()

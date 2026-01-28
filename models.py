@@ -165,6 +165,7 @@ class ServersVPN(Base):
     xui_username: Mapped[str] = mapped_column(String(300))
     xui_password: Mapped[str] = mapped_column(String(300))
     inbound_port: Mapped[int] = mapped_column(Integer)
+    subscription_port: Mapped[int] = mapped_column(Integer, default=2096)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     idTypeVPN: Mapped[int] = mapped_column(ForeignKey("types_vpn.idTypeVPN"))
@@ -243,7 +244,6 @@ class VPNSubscription(Base):
     provider: Mapped[str] = mapped_column(String(100))
     provider_client_email: Mapped[str] = mapped_column(String(200), index=True)
     provider_client_uuid: Mapped[str] = mapped_column(String(200))
-    access_data: Mapped[str] = mapped_column(String(500))
     subscription_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     subscription_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
@@ -308,11 +308,3 @@ class PromoCodeUsage(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(text(
-            "ALTER TABLE vpn_subscriptions "
-            "ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100)"
-        ))
-        await conn.execute(text(
-            "ALTER TABLE vpn_subscriptions "
-            "ADD COLUMN IF NOT EXISTS subscription_url VARCHAR(500)"
-        ))

@@ -282,6 +282,7 @@ async def admin_get_servers():
                 "xui_username": s.xui_username,
                 "xui_password": s.xui_password,
                 "inbound_port": s.inbound_port,
+                "subscription_port": s.subscription_port,
                 "is_active": s.is_active,
                 "idTypeVPN": s.idTypeVPN,
                 "idCountry": s.idCountry
@@ -301,6 +302,7 @@ async def admin_add_server(data):
             xui_username=data.xui_username,
             xui_password=data.xui_password,
             inbound_port=data.inbound_port,
+            subscription_port=data.subscription_port,
             is_active=data.is_active,
             idTypeVPN=data.idTypeVPN,
             idCountry=data.idCountry
@@ -332,6 +334,7 @@ async def admin_update_server(server_id: int, data):
                 xui_username=data["xui_username"],
                 xui_password=data["xui_password"],
                 inbound_port=data["inbound_port"],
+                subscription_port=data["subscription_port"],
                 is_active=data["is_active"],
                 idTypeVPN=data["idTypeVPN"],
                 idCountry=data["idCountry"]
@@ -573,7 +576,6 @@ async def admin_get_vpn_subscriptions():
             "provider": s.provider,
             "provider_client_email": s.provider_client_email,
             "provider_client_uuid": s.provider_client_uuid,
-            "access_data": s.access_data,
             "subscription_id": s.subscription_id,
             "subscription_url": s.subscription_url,
 
@@ -593,7 +595,6 @@ async def admin_add_vpn_subscription(data: dict):
             provider=data["provider"],
             provider_client_email=data["provider_client_email"],
             provider_client_uuid=data["provider_client_uuid"],
-            access_data=data["access_data"],
             subscription_id=data.get("subscription_id"),
             subscription_url=data.get("subscription_url"),
             expires_at=data["expires_at"],
@@ -622,7 +623,6 @@ async def admin_update_vpn_subscription(sub_id: int, data: dict):
             "status",
             "provider_client_email",
             "provider_client_uuid",
-            "access_data",
             "subscription_id",
             "subscription_url",
         }
