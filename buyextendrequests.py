@@ -78,7 +78,15 @@ async def pay_and_extend_vpn(subscription_id: int, tariff_id: int):
         if not inbound:
             raise Exception("Inbound not found")
 
-        await xui.extend_client(inbound_id=inbound.id,client_email=sub.provider_client_email,days=tariff.days)
+        extend_result = await xui.extend_client(
+            inbound_id=inbound.id,
+            client_email=sub.provider_client_email,
+            days=tariff.days,
+            sub_id=sub.subscription_id
+        )
+        if not sub.subscription_id and extend_result.get("sub_id"):
+            sub.subscription_id = extend_result["sub_id"]
+            sub.subscription_url = rq.build_subscription_url(server, sub.subscription_id)
 
         now = datetime.now(timezone.utc)
 

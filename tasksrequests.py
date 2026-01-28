@@ -159,7 +159,15 @@ async def _apply_free_days_to_subscription(session, user_id: int, server_id: int
         if not inbound:
             raise HTTPException(500, "Inbound not found")
 
-        await xui.extend_client(inbound_id=inbound.id, client_email=sub.provider_client_email, days=days)
+        extend_result = await xui.extend_client(
+            inbound_id=inbound.id,
+            client_email=sub.provider_client_email,
+            days=days,
+            sub_id=sub.subscription_id
+        )
+        if not sub.subscription_id and extend_result.get("sub_id"):
+            sub.subscription_id = extend_result["sub_id"]
+            sub.subscription_url = rq.build_subscription_url(server, sub.subscription_id)
 
         if sub.expires_at and sub.expires_at > now:
             sub.expires_at = sub.expires_at + timedelta(days=days)

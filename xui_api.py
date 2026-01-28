@@ -142,7 +142,7 @@ class XUIApi:
         }
 
 
-    async def extend_client(self, inbound_id: int, client_email: str, days: int):
+    async def extend_client(self, inbound_id: int, client_email: str, days: int, sub_id: str | None = None):
         await self.login()
 
         inbound = await asyncio.to_thread(self.api.inbound.get_by_id,inbound_id)
@@ -170,6 +170,17 @@ class XUIApi:
         )
 
         client_uuid = old_client.id
+        if not sub_id:
+            for key in ("sub_id", "subId", "subid"):
+                sub_id = getattr(old_client, key, None)
+                if sub_id:
+                    break
+            if not sub_id and hasattr(old_client, "model_dump"):
+                data = old_client.model_dump()
+                sub_id = data.get("sub_id") or data.get("subId")
+            if not sub_id and hasattr(old_client, "dict"):
+                data = old_client.dict()
+                sub_id = data.get("sub_id") or data.get("subId")
 
         # удаляем клиента
         inbound.settings.clients = [
@@ -190,7 +201,8 @@ class XUIApi:
                 total_gb=0,
                 up=0,
                 down=0,
-                limit_ip=2
+                limit_ip=2,
+                sub_id=sub_id
             )
         except TypeError:
             new_client = Client(
@@ -205,6 +217,9 @@ class XUIApi:
             try:
                 setattr(new_client, "limit_ip", 2)
                 setattr(new_client, "limitIp", 2)
+                if sub_id:
+                    setattr(new_client, "sub_id", sub_id)
+                    setattr(new_client, "subId", sub_id)
             except Exception:
                 pass
 
@@ -212,7 +227,7 @@ class XUIApi:
 
         await asyncio.to_thread(self.api.inbound.update,inbound_id,inbound)
 
-        return {"email": client_email,"new_expiry": new_expiry}
+        return {"email": client_email,"new_expiry": new_expiry, "sub_id": sub_id}
 
 
     async def remove_client(self, inbound_id: int, client_uuid: str):
