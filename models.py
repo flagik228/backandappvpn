@@ -3,7 +3,7 @@ from sqlalchemy.orm import (Mapped, DeclarativeBase, mapped_column)
 from sqlalchemy.ext.asyncio import (AsyncAttrs, async_sessionmaker, create_async_engine)
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import Column, Integer, ForeignKey, Numeric, Boolean, UniqueConstraint, Index
+from sqlalchemy import Column, Integer, ForeignKey, Numeric, Boolean, UniqueConstraint, Index, text
 from sqlalchemy.orm import relationship
 from dotenv import load_dotenv
 import os
@@ -308,3 +308,11 @@ class PromoCodeUsage(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text(
+            "ALTER TABLE vpn_subscriptions "
+            "ADD COLUMN IF NOT EXISTS subscription_id VARCHAR(100)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE vpn_subscriptions "
+            "ADD COLUMN IF NOT EXISTS subscription_url VARCHAR(500)"
+        ))
