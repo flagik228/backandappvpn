@@ -134,6 +134,29 @@ async def get_user_history(tg_id: int):
     return await rq.get_user_history(tg_id)
 
 
+class PromoCodeRequest(BaseModel):
+    tg_id: int
+    code: str
+
+
+@app.post("/api/promo/validate")
+async def promo_validate(data: PromoCodeRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "USER_NOT_FOUND")
+    return await rq.validate_promo_code(user.idUser, data.code)
+
+
+@app.post("/api/promo/apply")
+async def promo_apply(data: PromoCodeRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "USER_NOT_FOUND")
+    return await rq.apply_promo_code(user.idUser, data.code)
+
+
 ORDER_ACTIVE_STATUSES = ("pending", "processing")
 ORDER_TTL_MINUTES = 10
 
@@ -1307,6 +1330,47 @@ async def admin_update_country(country_id: int, data: CountryCreate):
 @app.delete("/api/admin/countries/{country_id}")
 async def admin_delete_country(country_id: int):
     return await rqadm.admin_delete_country(country_id)
+
+
+# ======================
+# ADMIN: PROMO CODES
+# ======================
+class PromoCodeCreate(BaseModel):
+    code: str
+    reward_type: str
+    reward_value: Decimal
+    reward_name: str
+    max_uses: int | None = None
+    is_active: bool = True
+
+
+class PromoCodeUpdate(BaseModel):
+    code: str | None = None
+    reward_type: str | None = None
+    reward_value: Decimal | None = None
+    reward_name: str | None = None
+    max_uses: int | None = None
+    is_active: bool | None = None
+
+
+@app.get("/api/admin/promo-codes")
+async def admin_get_promo_codes():
+    return await rqadm.admin_get_promo_codes()
+
+
+@app.post("/api/admin/promo-codes")
+async def admin_add_promo_code(data: PromoCodeCreate):
+    return await rqadm.admin_add_promo_code(**data.dict())
+
+
+@app.patch("/api/admin/promo-codes/{promo_id}")
+async def admin_update_promo_code(promo_id: int, data: PromoCodeUpdate):
+    return await rqadm.admin_update_promo_code(promo_id, data.dict(exclude_unset=True))
+
+
+@app.delete("/api/admin/promo-codes/{promo_id}")
+async def admin_delete_promo_code(promo_id: int):
+    return await rqadm.admin_delete_promo_code(promo_id)
 
 
 # ======================

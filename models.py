@@ -273,6 +273,36 @@ class ReferralEarning(Base):
     amount_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     
+
+# --- PROMO CODES ---
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(100))
+    code_normalized: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    reward_type: Mapped[str] = mapped_column(String(20))  # balance / free_days
+    reward_value: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    reward_name: Mapped[str] = mapped_column(String(200))
+    max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    __table_args__ = (
+        Index("idx_promo_code_active", "code_normalized", "is_active"),
+    )
+
+
+class PromoCodeUsage(Base):
+    __tablename__ = "promo_code_usages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    promo_code_id: Mapped[int] = mapped_column(ForeignKey("promo_codes.id", ondelete="CASCADE"))
+    idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("promo_code_id", "idUser", name="uq_promo_code_user"),
+    )
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

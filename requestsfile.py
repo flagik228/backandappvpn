@@ -1,7 +1,7 @@
 from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletOperation, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
-    UserFreeDaysBalance, UserRewardOp, UserCheckin)
+    UserFreeDaysBalance, UserRewardOp, UserCheckin, PromoCode, PromoCodeUsage)
 from typing import List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -31,6 +31,98 @@ async def add_user(tg_id: int, user_role: str = "user", referrer_id: int | None 
         await session.commit()
         await session.refresh(user)
         return user
+
+
+def normalize_promo_code(code: str) -> str:
+    return code.strip().upper()
+
+
+async def validate_promo_code(user_id: int, code: str):
+    if not code:
+        return {"valid": False, "reason": "empty"}
+    code_norm = normalize_promo_code(code)
+    async with async_session() as session:
+        promo = await session.scalar(
+            select(PromoCode).where(
+                PromoCode.code_normalized == code_norm,
+                PromoCode.is_active == True
+            )
+        )
+        if not promo:
+            return {"valid": False, "reason": "not_found"}
+
+        used = await session.scalar(
+            select(PromoCodeUsage).where(
+                PromoCodeUsage.promo_code_id == promo.id,
+                PromoCodeUsage.idUser == user_id
+            )
+        )
+        if used:
+            return {"valid": False, "reason": "already_used"}
+
+        if promo.max_uses is not None and promo.used_count >= promo.max_uses:
+            return {"valid": False, "reason": "limit"}
+
+        reward = {
+            "type": promo.reward_type,
+            "value": str(promo.reward_value),
+            "name": promo.reward_name
+        }
+        return {"valid": True, "reward": reward}
+
+
+async def apply_promo_code(user_id: int, code: str):
+    if not code:
+        return {"ok": False, "reason": "empty"}
+    code_norm = normalize_promo_code(code)
+    async with async_session() as session:
+        promo = await session.scalar(
+            select(PromoCode)
+            .where(PromoCode.code_normalized == code_norm, PromoCode.is_active == True)
+            .with_for_update()
+        )
+        if not promo:
+            return {"ok": False, "reason": "not_found"}
+
+        used = await session.scalar(
+            select(PromoCodeUsage)
+            .where(PromoCodeUsage.promo_code_id == promo.id, PromoCodeUsage.idUser == user_id)
+        )
+        if used:
+            return {"ok": False, "reason": "already_used"}
+
+        if promo.max_uses is not None and promo.used_count >= promo.max_uses:
+            return {"ok": False, "reason": "limit"}
+
+        if promo.reward_type == "balance":
+            wallet = await session.scalar(
+                select(UserWallet).where(UserWallet.idUser == user_id).with_for_update()
+            )
+            if not wallet:
+                return {"ok": False, "reason": "wallet_not_found"}
+            wallet.balance_usdt += promo.reward_value
+            session.add(WalletTransaction(
+                wallet_id=wallet.id,
+                amount=promo.reward_value,
+                type="promo",
+                description=f"Промокод {promo.code}"
+            ))
+        elif promo.reward_type == "free_days":
+            days = int(promo.reward_value)
+            await add_free_days(session, user_id, days, "promo", meta=f"code:{promo.code}")
+        else:
+            return {"ok": False, "reason": "invalid_reward"}
+
+        promo.used_count += 1
+        session.add(PromoCodeUsage(promo_code_id=promo.id, idUser=user_id))
+        await session.commit()
+
+        reward = {
+            "type": promo.reward_type,
+            "value": str(promo.reward_value),
+            "name": promo.reward_name
+        }
+        return {"ok": True, "reward": reward}
 
 
 async def get_or_create_free_days_balance(session, user_id: int, for_update: bool = False) -> UserFreeDaysBalance:

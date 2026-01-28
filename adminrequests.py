@@ -1,6 +1,7 @@
 from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletTransaction, VPNSubscription, TypesVPN,
-    CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning)
+    CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
+    PromoCode, PromoCodeUsage)
 from typing import List
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -739,5 +740,79 @@ async def admin_delete_referral_earning(earning_id: int):
             raise ValueError("ReferralEarning not found")
 
         await session.delete(e)
+        await session.commit()
+        return {"status": "ok"}
+
+
+# =======================
+# --- ADMIN: PROMO CODES ---
+# =======================
+def normalize_promo_code(code: str) -> str:
+    return code.strip().upper()
+
+
+async def admin_get_promo_codes():
+    async with async_session() as session:
+        promos = await session.scalars(select(PromoCode))
+        return [{
+            "id": p.id,
+            "code": p.code,
+            "reward_type": p.reward_type,
+            "reward_value": str(p.reward_value),
+            "reward_name": p.reward_name,
+            "max_uses": p.max_uses,
+            "used_count": p.used_count,
+            "is_active": p.is_active,
+            "created_at": p.created_at.isoformat()
+        } for p in promos]
+
+
+async def admin_add_promo_code(code: str, reward_type: str, reward_value: Decimal, reward_name: str, max_uses: int | None, is_active: bool):
+    if not code:
+        raise ValueError("code is required")
+    if reward_type not in ("balance", "free_days"):
+        raise ValueError("reward_type must be balance or free_days")
+
+    async with async_session() as session:
+        promo = PromoCode(
+            code=code,
+            code_normalized=normalize_promo_code(code),
+            reward_type=reward_type,
+            reward_value=reward_value,
+            reward_name=reward_name,
+            max_uses=max_uses,
+            is_active=is_active
+        )
+        session.add(promo)
+        await session.commit()
+        await session.refresh(promo)
+        return {"id": promo.id}
+
+
+async def admin_update_promo_code(promo_id: int, data: dict):
+    async with async_session() as session:
+        promo = await session.get(PromoCode, promo_id)
+        if not promo:
+            raise ValueError("Promo code not found")
+
+        if "code" in data and data["code"] is not None:
+            promo.code = data["code"]
+            promo.code_normalized = normalize_promo_code(data["code"])
+
+        for field in ["reward_type", "reward_value", "reward_name", "max_uses", "is_active"]:
+            if field in data:
+                setattr(promo, field, data[field])
+
+        await session.commit()
+        return {"status": "ok"}
+
+
+async def admin_delete_promo_code(promo_id: int):
+    async with async_session() as session:
+        promo = await session.get(PromoCode, promo_id)
+        if not promo:
+            raise ValueError("Promo code not found")
+
+        await session.delete(promo)
         await session.commit()
         return {"status": "ok"}
