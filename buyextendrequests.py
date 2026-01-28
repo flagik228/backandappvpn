@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from urllib.parse import quote
 from xui_api import XUIApi
-import uuid
+import uuid as uuid_lib
 from sqlalchemy import select
 import requestsfile as rq
 import main as main
@@ -37,9 +37,9 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         if not inbound:
             raise Exception("Inbound not found")
 
-        sub_id = uuid.uuid4().hex[:16]
+        sub_id = uuid_lib.uuid4().hex[:16]
         client = await xui.add_client(inbound_id=inbound.id,email=client_email,days=tariff_days,sub_id=sub_id)
-        uuid = client["uuid"]
+        client_uuid = client["uuid"]
         sub_id = client.get("sub_id") or sub_id
 
         # получаем Reality настройки
@@ -55,7 +55,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         query_str = "&".join(f"{k}={quote(str(v))}" for k, v in query.items())
 
         access_link = (
-            f"vless://{uuid}@{server.server_ip}:{server.inbound_port}"
+            f"vless://{client_uuid}@{server.server_ip}:{server.inbound_port}"
             f"?{query_str}#{client_email}"
         )
 
@@ -67,7 +67,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
             subscription_url = f"{server.api_url.rstrip('/')}/sub/{sub_id}"
 
         subscription = VPNSubscription(idUser=user_id,idServerVPN=server_id,provider="xui",provider_client_email=client_email,
-            provider_client_uuid=uuid,access_data=access_link,subscription_id=sub_id,subscription_url=subscription_url,
+            provider_client_uuid=client_uuid,access_data=access_link,subscription_id=sub_id,subscription_url=subscription_url,
             created_at=now,expires_at=expires_at,is_active=True,status="active")
 
         session.add(subscription)
