@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from urllib.parse import quote
 from xui_api import XUIApi
+import uuid
 from sqlalchemy import select
 import requestsfile as rq
 import main as main
@@ -36,8 +37,10 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         if not inbound:
             raise Exception("Inbound not found")
 
-        client = await xui.add_client(inbound_id=inbound.id,email=client_email,days=tariff_days)
+        sub_id = uuid.uuid4().hex[:16]
+        client = await xui.add_client(inbound_id=inbound.id,email=client_email,days=tariff_days,sub_id=sub_id)
         uuid = client["uuid"]
+        sub_id = client.get("sub_id") or sub_id
 
         # получаем Reality настройки
         stream = inbound.stream_settings
@@ -59,14 +62,20 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         now = datetime.utcnow()
         expires_at = now + timedelta(days=tariff_days)
 
+        subscription_url = None
+        if server.api_url and sub_id:
+            subscription_url = f"{server.api_url.rstrip('/')}/sub/{sub_id}"
+
         subscription = VPNSubscription(idUser=user_id,idServerVPN=server_id,provider="xui",provider_client_email=client_email,
-            provider_client_uuid=uuid,access_data=access_link,created_at=now,expires_at=expires_at,is_active=True,status="active")
+            provider_client_uuid=uuid,access_data=access_link,subscription_id=sub_id,subscription_url=subscription_url,
+            created_at=now,expires_at=expires_at,is_active=True,status="active")
 
         session.add(subscription)
         await rq.recalc_server_load(session, server_id)
         await session.commit()
 
-        return {"subscription_id": subscription.id,"access_data": access_link,"expires_at": expires_at.isoformat(),"expires_at_human": rq.format_datetime_ru(expires_at)}
+        return {"subscription_id": subscription.id,"access_data": access_link,"subscription_url": subscription_url,
+            "expires_at": expires_at.isoformat(),"expires_at_human": rq.format_datetime_ru(expires_at)}
         
         
 # продление
@@ -101,6 +110,7 @@ async def pay_and_extend_vpn(subscription_id: int, tariff_id: int):
         await session.commit()
 
         return {"subscription_id": sub.id,"access_data": sub.access_data,"days_added": tariff.days,
+            "subscription_url": sub.subscription_url,
             "expires_at": sub.expires_at.isoformat(),"expires_at_human": rq.format_datetime_ru(sub.expires_at)}
 
 
@@ -170,6 +180,7 @@ async def buy_vpn_from_balance(tg_id: int, tariff_id: int):
         await session.commit()
 
         return {"order_id": order.id,"access_data": vpn_data["access_data"],
+            "subscription_url": vpn_data.get("subscription_url"),
             "expires_at_human": vpn_data["expires_at_human"],"server_name": server.nameVPN}
 
 

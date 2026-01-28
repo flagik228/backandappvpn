@@ -244,6 +244,8 @@ class VPNSubscription(Base):
     provider_client_email: Mapped[str] = mapped_column(String(200), index=True)
     provider_client_uuid: Mapped[str] = mapped_column(String(200))
     access_data: Mapped[str] = mapped_column(String(500))
+    subscription_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    subscription_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

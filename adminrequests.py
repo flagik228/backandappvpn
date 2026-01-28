@@ -574,6 +574,8 @@ async def admin_get_vpn_subscriptions():
             "provider_client_email": s.provider_client_email,
             "provider_client_uuid": s.provider_client_uuid,
             "access_data": s.access_data,
+            "subscription_id": s.subscription_id,
+            "subscription_url": s.subscription_url,
 
             "created_at": s.created_at.isoformat(),
             "expires_at": s.expires_at.isoformat(),
@@ -592,6 +594,8 @@ async def admin_add_vpn_subscription(data: dict):
             provider_client_email=data["provider_client_email"],
             provider_client_uuid=data["provider_client_uuid"],
             access_data=data["access_data"],
+            subscription_id=data.get("subscription_id"),
+            subscription_url=data.get("subscription_url"),
             expires_at=data["expires_at"],
             is_active=data.get("is_active", True),
             status=data.get("status", "active"),
@@ -619,6 +623,8 @@ async def admin_update_vpn_subscription(sub_id: int, data: dict):
             "provider_client_email",
             "provider_client_uuid",
             "access_data",
+            "subscription_id",
+            "subscription_url",
         }
 
         for key, value in data.items():

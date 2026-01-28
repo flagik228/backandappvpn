@@ -57,7 +57,7 @@ class XUIApi:
     
 
     # ————————— CLIENTS —————————
-    async def add_client(self, inbound_id: int, email: str, days: int):
+    async def add_client(self, inbound_id: int, email: str, days: int, sub_id: str | None = None):
         await self.login()
 
         inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
@@ -67,19 +67,54 @@ class XUIApi:
         client_uuid = str(uuid.uuid4())
         expiry_time = int((datetime.utcnow() + timedelta(days=days)).timestamp() * 1000)
 
-        new_client = Client(
-            id=client_uuid,
-            email=email,
-            enable=True,
-            expiry_time=expiry_time
-        )
+        try:
+            new_client = Client(
+                id=client_uuid,
+                email=email,
+                enable=True,
+                expiry_time=expiry_time,
+                sub_id=sub_id
+            )
+        except TypeError:
+            new_client = Client(
+                id=client_uuid,
+                email=email,
+                enable=True,
+                expiry_time=expiry_time
+            )
+            if sub_id:
+                try:
+                    setattr(new_client, "sub_id", sub_id)
+                    setattr(new_client, "subId", sub_id)
+                except Exception:
+                    pass
 
         await asyncio.to_thread(self.api.client.add, inbound_id, [new_client])
+
+        client_sub_id = None
+        if sub_id:
+            client_sub_id = sub_id
+        else:
+            try:
+                fetched = await asyncio.to_thread(self.api.client.get_by_email, email)
+                for key in ("sub_id", "subId", "subid"):
+                    client_sub_id = getattr(fetched, key, None)
+                    if client_sub_id:
+                        break
+                if not client_sub_id and hasattr(fetched, "model_dump"):
+                    data = fetched.model_dump()
+                    client_sub_id = data.get("sub_id") or data.get("subId")
+                if not client_sub_id and hasattr(fetched, "dict"):
+                    data = fetched.dict()
+                    client_sub_id = data.get("sub_id") or data.get("subId")
+            except Exception:
+                client_sub_id = None
 
         return {
             "uuid": client_uuid,
             "email": email,
-            "expiry_time": expiry_time
+            "expiry_time": expiry_time,
+            "sub_id": client_sub_id
         }
 
 

@@ -342,6 +342,7 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
         for sub, server in rows:
             is_active = sub.expires_at > now
             result.append({"subscription_id": sub.id,"server_id": server.idServerVPN,"serverName": server.nameVPN,"access_data": sub.access_data,
+                "subscription_url": sub.subscription_url,"subscription_key": sub.subscription_id,
                 "expires_at": sub.expires_at.isoformat(),"is_active": is_active,"status": "active" if is_active else "expired"})
 
         return result
@@ -374,6 +375,8 @@ async def get_subscriptions_by_server(user_id: int, server_id: int) -> List[dict
                 "expires_at": sub.expires_at.isoformat(),
                 "expires_at_human": format_datetime_ru(sub.expires_at),
                 "days_left": days_left,
+                "subscription_url": sub.subscription_url,
+                "subscription_key": sub.subscription_id,
             })
         return result
 
