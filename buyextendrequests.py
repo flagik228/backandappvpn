@@ -62,9 +62,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         now = datetime.utcnow()
         expires_at = now + timedelta(days=tariff_days)
 
-        subscription_url = None
-        if server.api_url and sub_id:
-            subscription_url = f"{server.api_url.rstrip('/')}/sub/{sub_id}"
+        subscription_url = rq.build_subscription_url(server, sub_id)
 
         subscription = VPNSubscription(idUser=user_id,idServerVPN=server_id,provider="xui",provider_client_email=client_email,
             provider_client_uuid=client_uuid,access_data=access_link,subscription_id=sub_id,subscription_url=subscription_url,

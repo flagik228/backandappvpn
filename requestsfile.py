@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from sqlalchemy import select, func, exists
 from sqlalchemy.orm import aliased
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from xui_api import XUIApi
 
 
@@ -327,6 +327,24 @@ def format_datetime_ru(dt: datetime) -> str:
     return dt.strftime("%d.%m.%Y %H:%M")
 
 
+def build_subscription_url(server: ServersVPN, sub_id: str | None) -> str | None:
+    if not sub_id:
+        return None
+    scheme = "https"
+    host = None
+    if server.api_url:
+        parsed = urlparse(server.api_url)
+        if parsed.scheme:
+            scheme = parsed.scheme
+        if parsed.hostname:
+            host = parsed.hostname
+    if not host and server.server_ip:
+        host = server.server_ip
+    if not host:
+        return None
+    return f"{scheme}://{host}:2096/sub/{sub_id}"
+
+
 # MY VPNs
 async def get_my_vpns(tg_id: int) -> List[dict]:
     async with async_session() as session:
@@ -341,8 +359,9 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
         result = []
         for sub, server in rows:
             is_active = sub.expires_at > now
+            subscription_url = build_subscription_url(server, sub.subscription_id) or sub.subscription_url
             result.append({"subscription_id": sub.id,"server_id": server.idServerVPN,"serverName": server.nameVPN,"access_data": sub.access_data,
-                "subscription_url": sub.subscription_url,"subscription_key": sub.subscription_id,
+                "subscription_url": subscription_url,"subscription_key": sub.subscription_id,
                 "expires_at": sub.expires_at.isoformat(),"is_active": is_active,"status": "active" if is_active else "expired"})
 
         return result
@@ -366,6 +385,7 @@ async def get_subscriptions_by_server(user_id: int, server_id: int) -> List[dict
             is_active = sub.expires_at > now
             delta = sub.expires_at - now
             days_left = max(0, (delta.days + (1 if delta.seconds > 0 else 0)))
+            subscription_url = build_subscription_url(server, sub.subscription_id) or sub.subscription_url
             result.append({
                 "subscription_id": sub.id,
                 "server_id": server.idServerVPN,
@@ -375,7 +395,7 @@ async def get_subscriptions_by_server(user_id: int, server_id: int) -> List[dict
                 "expires_at": sub.expires_at.isoformat(),
                 "expires_at_human": format_datetime_ru(sub.expires_at),
                 "days_left": days_left,
-                "subscription_url": sub.subscription_url,
+                "subscription_url": subscription_url,
                 "subscription_key": sub.subscription_id,
             })
         return result

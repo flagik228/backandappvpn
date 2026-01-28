@@ -109,6 +109,24 @@ class XUIApi:
                     client_sub_id = data.get("sub_id") or data.get("subId")
             except Exception:
                 client_sub_id = None
+        if not client_sub_id:
+            try:
+                inbound = await asyncio.to_thread(self.api.inbound.get_by_id, inbound_id)
+                for c in inbound.settings.clients or []:
+                    if c.email == email:
+                        for key in ("sub_id", "subId", "subid"):
+                            client_sub_id = getattr(c, key, None)
+                            if client_sub_id:
+                                break
+                        if not client_sub_id and hasattr(c, "model_dump"):
+                            data = c.model_dump()
+                            client_sub_id = data.get("sub_id") or data.get("subId")
+                        if not client_sub_id and hasattr(c, "dict"):
+                            data = c.dict()
+                            client_sub_id = data.get("sub_id") or data.get("subId")
+                        break
+            except Exception:
+                client_sub_id = None
 
         return {
             "uuid": client_uuid,
