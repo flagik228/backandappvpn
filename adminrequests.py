@@ -1,7 +1,7 @@
 from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
-    PromoCode, PromoCodeUsage)
+    PromoCode, PromoCodeUsage, BundlePlan, BundleServer)
 from typing import List
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -401,6 +401,78 @@ async def admin_delete_tariff(tariff_id: int):
             raise ValueError("Tariff not found")
 
         await session.delete(t)
+        await session.commit()
+        return {"status": "ok"}
+
+
+# =========================================================
+# --- ADMIN: Bundle Plans
+# =========================================================
+async def admin_get_bundle_plans():
+    async with async_session() as session:
+        plans = (await session.scalars(select(BundlePlan))).all()
+        result = []
+        for p in plans:
+            servers = (await session.scalars(
+                select(BundleServer.server_id).where(BundleServer.bundle_plan_id == p.id)
+            )).all()
+            result.append({
+                "id": p.id,
+                "name": p.name,
+                "price_usdt": str(p.price_usdt),
+                "days": p.days,
+                "is_active": p.is_active,
+                "server_ids": servers
+            })
+        return result
+
+
+async def admin_add_bundle_plan(data: dict):
+    async with async_session() as session:
+        plan = BundlePlan(
+            name=data["name"],
+            price_usdt=data["price_usdt"],
+            days=data["days"],
+            is_active=data.get("is_active", True)
+        )
+        session.add(plan)
+        await session.flush()
+
+        for server_id in data.get("server_ids", []):
+            session.add(BundleServer(bundle_plan_id=plan.id, server_id=server_id))
+
+        await session.commit()
+        await session.refresh(plan)
+        return {"id": plan.id}
+
+
+async def admin_update_bundle_plan(plan_id: int, data: dict):
+    async with async_session() as session:
+        plan = await session.get(BundlePlan, plan_id)
+        if not plan:
+            raise ValueError("BundlePlan not found")
+
+        for field in ["name", "price_usdt", "days", "is_active"]:
+            if field in data:
+                setattr(plan, field, data[field])
+
+        if "server_ids" in data:
+            await session.execute(
+                delete(BundleServer).where(BundleServer.bundle_plan_id == plan_id)
+            )
+            for server_id in data["server_ids"]:
+                session.add(BundleServer(bundle_plan_id=plan_id, server_id=server_id))
+
+        await session.commit()
+        return {"status": "ok"}
+
+
+async def admin_delete_bundle_plan(plan_id: int):
+    async with async_session() as session:
+        plan = await session.get(BundlePlan, plan_id)
+        if not plan:
+            raise ValueError("BundlePlan not found")
+        await session.delete(plan)
         await session.commit()
         return {"status": "ok"}
     

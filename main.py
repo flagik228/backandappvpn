@@ -17,7 +17,7 @@ from aiogram.filters import CommandStart
 from yookassa.domain.notification import WebhookNotification, WebhookNotificationFactory
 from yookassa.domain.common import SecurityHelper
 
-from models import init_db, async_session, UserStart, User, WalletOperation, WalletTransaction, UserTask, UserReward, ExchangeRate,Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription
+from models import init_db, async_session, UserStart, User, WalletOperation, WalletTransaction, UserTask, UserReward, ExchangeRate, Tariff, ServersVPN, Order, UserWallet, Payment, VPNSubscription, BundlePlan, BundleSubscription, BundleServer
 import requestsfile as rq
 import buyextendrequests as berq
 import yookassarequests as ykrq
@@ -244,6 +244,16 @@ async def my_vpns(tg_id: int):
     return await rq.get_my_vpns(tg_id)
 
 
+@app.get("/api/vpn/bundle/plans")
+async def get_bundle_plans():
+    return await rq.get_bundle_plans_active()
+
+
+@app.get("/api/vpn/bundle/my/{tg_id}")
+async def my_bundle_vpns(tg_id: int):
+    return await rq.get_my_bundle_vpns(tg_id)
+
+
 # === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =====
 @app.get("/api/payment/status/{payment_id}")
 async def get_payment_status(payment_id: int):
@@ -367,6 +377,144 @@ async def renew_invoice(data: RenewInvoiceRequest):
         return {"invoice_link": invoice_link, "order_id": order.id}
 
 
+# BUNDLE (ALL SERVERS) — Stars
+class BundleInvoiceRequest(BaseModel):
+    tg_id: int
+    bundle_plan_id: int
+
+
+class BundleRenewInvoiceRequest(BaseModel):
+    tg_id: int
+    bundle_subscription_id: int
+
+
+@app.post("/api/vpn/bundle/create-invoice")
+async def bundle_create_invoice(data: BundleInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        plan = await session.get(BundlePlan, data.bundle_plan_id)
+        if not plan or not plan.is_active:
+            raise HTTPException(404, "Bundle plan not found")
+
+        server_ids = (await session.scalars(
+            select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+        )).all()
+        if not server_ids:
+            raise HTTPException(400, "PLAN_HAS_NO_SERVERS")
+
+        server_id = server_ids[0]
+        server = await session.get(ServersVPN, server_id)
+
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        if not rate:
+            raise HTTPException(500, "Exchange rate not set")
+
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
+            )
+
+        price_usdt = Decimal(plan.price_usdt)
+        stars_price = int(Decimal(plan.price_usdt) / rate.rate)
+        if stars_price < 1:
+            stars_price = 1
+
+        order = Order(
+            idUser=user.idUser,
+            server_id=server.idServerVPN,
+            idTarif=None,
+            subscription_id=None,
+            bundle_plan_id=plan.id,
+            purpose_order="bundle_buy",
+            amount=price_usdt,
+            currency="USDT",
+            provider="stars",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
+        )
+        session.add(order)
+        await session.flush()
+        await session.commit()
+
+        invoice_link = await bot(
+            CreateInvoiceLink(title=f"VPN Все сервера {plan.days} дней",description=plan.name,payload=f"bundle_buy:{order.id}",currency="XTR",
+                prices=[LabeledPrice(label=f"{plan.days} дней VPN", amount=stars_price)])
+        )
+        order.payment_url = invoice_link
+        await session.commit()
+        return {"invoice_link": invoice_link, "order_id": order.id}
+
+
+@app.post("/api/vpn/bundle/renew-invoice")
+async def bundle_renew_invoice(data: BundleRenewInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        bundle_sub = await session.get(BundleSubscription, data.bundle_subscription_id)
+        if not bundle_sub:
+            raise HTTPException(404, "Bundle subscription not found")
+
+        plan = await session.get(BundlePlan, bundle_sub.bundle_plan_id)
+        if not plan or not plan.is_active:
+            raise HTTPException(404, "Bundle plan not found")
+
+        server_ids = (await session.scalars(
+            select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+        )).all()
+        if not server_ids:
+            raise HTTPException(400, "PLAN_HAS_NO_SERVERS")
+        server = await session.get(ServersVPN, server_ids[0])
+
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        if not rate:
+            raise HTTPException(500, "Exchange rate not set")
+
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
+            )
+
+        price_usdt = Decimal(plan.price_usdt)
+        stars_price = int(Decimal(plan.price_usdt) / rate.rate)
+        if stars_price < 1:
+            stars_price = 1
+
+        order = Order(
+            idUser=user.idUser,
+            server_id=server.idServerVPN,
+            idTarif=None,
+            subscription_id=None,
+            bundle_subscription_id=bundle_sub.id,
+            bundle_plan_id=plan.id,
+            purpose_order="bundle_extension",
+            amount=price_usdt,
+            currency="USDT",
+            provider="stars",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
+        )
+        session.add(order)
+        await session.flush()
+        await session.commit()
+
+        invoice_link = await bot(
+            CreateInvoiceLink(title=f"Продление VPN Все сервера {plan.days} дней",description=plan.name,payload=f"bundle_renew:{order.id}",currency="XTR",
+                prices=[LabeledPrice(label=f"{plan.days} дней VPN", amount=stars_price)])
+        )
+        order.payment_url = invoice_link
+        await session.commit()
+        return {"invoice_link": invoice_link, "order_id": order.id}
+
+
 # ПОПОЛНЕНИЕ
 class WalletDepositRequest(BaseModel):
     tg_id: int
@@ -475,7 +623,7 @@ async def successful_payment(message: Message):
         return
 
     # ПОКУПКА/ПРОДЛЕНИЕ
-    if prefix not in ("vpn", "renew"):
+    if prefix not in ("vpn", "renew", "bundle_buy", "bundle_renew"):
         return
 
     async with async_session() as session:
@@ -493,8 +641,8 @@ async def successful_payment(message: Message):
         await session.flush()
         order.status = "processing"
 
-        tariff = await session.get(Tariff, order.idTarif)
-        server = await session.get(ServersVPN, order.server_id)
+        tariff = await session.get(Tariff, order.idTarif) if order.idTarif else None
+        server = await session.get(ServersVPN, order.server_id) if order.server_id else None
 
         try:
             if order.purpose_order == "buy":
@@ -502,6 +650,35 @@ async def successful_payment(message: Message):
 
             elif order.purpose_order == "extension":
                 vpn_data = await berq.pay_and_extend_vpn(subscription_id=order.subscription_id,tariff_id=order.idTarif)
+
+            elif order.purpose_order == "bundle_buy":
+                plan = await session.get(BundlePlan, order.bundle_plan_id)
+                if not plan:
+                    raise Exception("Bundle plan not found")
+                server_ids = (await session.scalars(
+                    select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+                )).all()
+                servers = (await session.scalars(
+                    select(ServersVPN).where(ServersVPN.idServerVPN.in_(server_ids))
+                )).all()
+                bundle_sub = await berq.create_bundle_subscription(session, order.idUser, plan, servers)
+                order.bundle_subscription_id = bundle_sub.id
+                vpn_data = {"subscription_url": bundle_sub.subscription_url, "expires_at_human": rq.format_datetime_ru(bundle_sub.expires_at)}
+
+            elif order.purpose_order == "bundle_extension":
+                bundle_sub = await session.get(BundleSubscription, order.bundle_subscription_id)
+                if not bundle_sub:
+                    raise Exception("Bundle subscription not found")
+                plan = await session.get(BundlePlan, bundle_sub.bundle_plan_id)
+                server_ids = (await session.scalars(
+                    select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+                )).all()
+                servers = (await session.scalars(
+                    select(ServersVPN).where(ServersVPN.idServerVPN.in_(server_ids))
+                )).all()
+                await berq.extend_bundle_subscription(session, bundle_sub, plan, servers)
+                vpn_data = {"expires_at_human": rq.format_datetime_ru(bundle_sub.expires_at)}
+
             else:
                 raise Exception("Unknown order purpose")
 
@@ -530,6 +707,19 @@ async def successful_payment(message: Message):
             await message.answer(
                 f"♻️ <b>VPN успешно продлён!</b>\n"
                 f"➕ Добавлено дней: {vpn_data['days_added']}\n"
+                f"🕒 Новый срок: {vpn_data['expires_at_human']}",parse_mode="HTML"
+            )
+        elif order.purpose_order == "bundle_buy":
+            await message.answer(
+                f"✅ <b>VPN готов!</b>\n"
+                f"План: Все сервера\n"
+                f"Действует до: {vpn_data['expires_at_human']}\n\n"
+                f"<b>Ваша подписка:</b>\n"
+                f"<code>{vpn_data['subscription_url']}</code>",parse_mode="HTML"
+            )
+        elif order.purpose_order == "bundle_extension":
+            await message.answer(
+                f"♻️ <b>VPN успешно продлён!</b>\n"
                 f"🕒 Новый срок: {vpn_data['expires_at_human']}",parse_mode="HTML"
             )
 
@@ -613,6 +803,113 @@ async def renew_crypto_invoice(data: RenewCryptoInvoiceRequest):
         await session.commit()
 
         return {"invoice_url": invoice.mini_app_invoice_url,"order_id": order.id}
+
+
+# BUNDLE cryptobot
+class BundleCryptoInvoiceRequest(BaseModel):
+    tg_id: int
+    bundle_plan_id: int
+
+
+class BundleRenewCryptoInvoiceRequest(BaseModel):
+    tg_id: int
+    bundle_subscription_id: int
+
+
+@app.post("/api/vpn/bundle/crypto-invoice")
+async def bundle_crypto_invoice(data: BundleCryptoInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        plan = await session.get(BundlePlan, data.bundle_plan_id)
+        if not user or not plan or not plan.is_active:
+            raise HTTPException(404, "Invalid user or bundle plan")
+
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
+            )
+
+        server_ids = (await session.scalars(
+            select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+        )).all()
+        if not server_ids:
+            raise HTTPException(400, "PLAN_HAS_NO_SERVERS")
+
+        order = Order(
+            idUser=user.idUser,
+            server_id=server_ids[0],
+            idTarif=None,
+            subscription_id=None,
+            bundle_plan_id=plan.id,
+            purpose_order="bundle_buy",
+            amount=Decimal(plan.price_usdt),
+            currency="USDT",
+            provider="cryptobot",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
+        )
+        session.add(order)
+        await session.flush()
+
+        invoice = await crypto.create_invoice(asset="USDT",amount=float(plan.price_usdt),payload=f"bundle_buy:{order.id}")
+        order.payment_url = invoice.mini_app_invoice_url
+        session.add(Payment(order_id=order.id,provider="cryptobot",provider_payment_id=str(invoice.invoice_id),status="pending"))
+        await session.commit()
+
+        return {"invoice_url": invoice.mini_app_invoice_url, "order_id": order.id}
+
+
+@app.post("/api/vpn/bundle/renew-crypto-invoice")
+async def bundle_renew_crypto_invoice(data: BundleRenewCryptoInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+        bundle_sub = await session.get(BundleSubscription, data.bundle_subscription_id)
+        if not bundle_sub:
+            raise HTTPException(404, "Bundle subscription not found")
+        plan = await session.get(BundlePlan, bundle_sub.bundle_plan_id)
+        if not plan or not plan.is_active:
+            raise HTTPException(404, "Bundle plan not found")
+
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
+            )
+
+        server_ids = (await session.scalars(
+            select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+        )).all()
+        if not server_ids:
+            raise HTTPException(400, "PLAN_HAS_NO_SERVERS")
+
+        order = Order(
+            idUser=user.idUser,
+            server_id=server_ids[0],
+            idTarif=None,
+            subscription_id=None,
+            bundle_subscription_id=bundle_sub.id,
+            bundle_plan_id=plan.id,
+            purpose_order="bundle_extension",
+            amount=Decimal(plan.price_usdt),
+            currency="USDT",
+            provider="cryptobot",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
+        )
+        session.add(order)
+        await session.flush()
+
+        invoice = await crypto.create_invoice(asset="USDT",amount=float(plan.price_usdt),payload=f"bundle_renew:{order.id}")
+        order.payment_url = invoice.mini_app_invoice_url
+        session.add(Payment(order_id=order.id,provider="cryptobot",provider_payment_id=str(invoice.invoice_id),status="pending"))
+        await session.commit()
+
+        return {"invoice_url": invoice.mini_app_invoice_url, "order_id": order.id}
 
 
 # ПОПОПЛЛНЕНИЕ cryptobot
@@ -717,6 +1014,45 @@ async def crypto_webhook(data: dict):
 
             return {"ok": True}
 
+        # ПРОДЛЕНИЕ BUNDLE
+        if prefix == "bundle_renew":
+            order = await session.get(Order, entity_id)
+            if not order:
+                logger.warning("Cryptobot bundle order not found: %s", entity_id)
+                return {"ok": True}
+            if order.status != "pending":
+                logger.info("Cryptobot bundle order already handled: %s status=%s", order.id, order.status)
+                return {"ok": True}
+
+            order.status = "processing"
+            user = await session.get(User, order.idUser)
+            bundle_sub = await session.get(BundleSubscription, order.bundle_subscription_id)
+            plan = await session.get(BundlePlan, order.bundle_plan_id)
+            server_ids = (await session.scalars(
+                select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+            )).all()
+            servers = (await session.scalars(
+                select(ServersVPN).where(ServersVPN.idServerVPN.in_(server_ids))
+            )).all()
+            try:
+                await berq.extend_bundle_subscription(session, bundle_sub, plan, servers)
+            except Exception:
+                order.status = "failed"
+                await session.commit()
+                logger.exception("Cryptobot bundle renew failed: %s", order.id)
+                return {"ok": True}
+
+            order.status = "completed"
+            await session.commit()
+            logger.info("Cryptobot bundle renew completed: %s payment_id=%s", order.id, invoice_id)
+            await bot.send_message(chat_id=user.tg_id,
+                text=(
+                    f"♻️ <b>VPN успешно продлён!</b>\n"
+                    f"🕒 Новый срок: {rq.format_datetime_ru(bundle_sub.expires_at)}"
+                ),parse_mode="HTML"
+            )
+            return {"ok": True}
+
         # ПОКУПКА VPN
         if prefix == "buy":
             order = await session.get(Order, entity_id)
@@ -753,6 +1089,47 @@ async def crypto_webhook(data: dict):
                     f"Действует до: {vpn_data['expires_at_human']}\n\n"
                     f"<b>Ваша подписка:</b>\n"
                     f"<code>{vpn_data['subscription_url']}</code>"
+                ),parse_mode="HTML"
+            )
+
+        # ПОКУПКА BUNDLE
+        if prefix == "bundle_buy":
+            order = await session.get(Order, entity_id)
+            if not order:
+                logger.warning("Cryptobot bundle order not found: %s", entity_id)
+                return {"ok": True}
+            if order.status != "pending":
+                logger.info("Cryptobot bundle order already handled: %s status=%s", order.id, order.status)
+                return {"ok": True}
+
+            order.status = "processing"
+            user = await session.get(User, order.idUser)
+            plan = await session.get(BundlePlan, order.bundle_plan_id)
+            server_ids = (await session.scalars(
+                select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+            )).all()
+            servers = (await session.scalars(
+                select(ServersVPN).where(ServersVPN.idServerVPN.in_(server_ids))
+            )).all()
+            try:
+                bundle_sub = await berq.create_bundle_subscription(session, user.idUser, plan, servers)
+                order.bundle_subscription_id = bundle_sub.id
+            except Exception:
+                order.status = "failed"
+                await session.commit()
+                logger.exception("Cryptobot bundle buy failed: %s", order.id)
+                return {"ok": True}
+
+            order.status = "completed"
+            await session.commit()
+            logger.info("Cryptobot bundle buy completed: %s payment_id=%s", order.id, invoice_id)
+            await bot.send_message(chat_id=user.tg_id,
+                text=(
+                    f"✅ <b>VPN готов!</b>\n"
+                    f"План: Все сервера\n"
+                    f"Действует до: {rq.format_datetime_ru(bundle_sub.expires_at)}\n\n"
+                    f"<b>Ваша подписка:</b>\n"
+                    f"<code>{bundle_sub.subscription_url}</code>"
                 ),parse_mode="HTML"
             )
 
@@ -860,6 +1237,135 @@ async def renew_yookassa_invoice(data: RenewYooKassaInvoiceRequest):
         return {"confirmation_url": confirmation_url,"order_id": order.id,"amount_rub": str(price_rub)}
 
 
+# BUNDLE YooKassa
+class BundleYooKassaInvoiceRequest(BaseModel):
+    tg_id: int
+    bundle_plan_id: int
+
+
+class BundleRenewYooKassaInvoiceRequest(BaseModel):
+    tg_id: int
+    bundle_subscription_id: int
+
+
+@app.post("/api/vpn/bundle/yookassa-invoice")
+async def bundle_yookassa_invoice(data: BundleYooKassaInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        plan = await session.get(BundlePlan, data.bundle_plan_id)
+        if not user or not plan or not plan.is_active:
+            raise HTTPException(404, "Invalid user or plan")
+
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(status_code=409,
+                detail={"error": "ACTIVE_ORDER_EXISTS","order_id": active.id,"status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None}
+            )
+
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT"))
+        if not rate:
+            raise HTTPException(500, "RUB rate not set")
+
+        server_ids = (await session.scalars(
+            select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+        )).all()
+        if not server_ids:
+            raise HTTPException(400, "PLAN_HAS_NO_SERVERS")
+
+        price_rub = Decimal(plan.price_usdt) * Decimal(rate.rate)
+        order = Order(
+            idUser=user.idUser,
+            server_id=server_ids[0],
+            idTarif=None,
+            subscription_id=None,
+            bundle_plan_id=plan.id,
+            purpose_order="bundle_buy",
+            amount=Decimal(plan.price_usdt),
+            currency="USDT",
+            provider="yookassa",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
+        )
+        session.add(order)
+        await session.flush()
+
+        payment_id, confirmation_url = await ykrq.create_yookassa_payment(
+            order.id,
+            price_rub,
+            f"Bundle VPN {plan.days} days"
+        )
+        order.payment_url = confirmation_url
+        session.add(Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending"))
+        await session.commit()
+
+        return {"confirmation_url": confirmation_url,"order_id": order.id,"amount_rub": str(price_rub)}
+
+
+@app.post("/api/vpn/bundle/renew-yookassa-invoice")
+async def bundle_renew_yookassa_invoice(data: BundleRenewYooKassaInvoiceRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        bundle_sub = await session.get(BundleSubscription, data.bundle_subscription_id)
+        if not user or not bundle_sub:
+            raise HTTPException(404, "Invalid data")
+
+        plan = await session.get(BundlePlan, bundle_sub.bundle_plan_id)
+        if not plan or not plan.is_active:
+            raise HTTPException(404, "Bundle plan not found")
+
+        active = await get_active_order_for_user(session, user.idUser)
+        if active:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "ACTIVE_ORDER_EXISTS",
+                    "order_id": active.id,
+                    "status": active.status,
+                    "expires_at": active.expires_at.isoformat() if active.expires_at else None
+                }
+            )
+
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "RUB_USDT"))
+        if not rate:
+            raise HTTPException(500, "RUB rate not set")
+
+        server_ids = (await session.scalars(
+            select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+        )).all()
+        if not server_ids:
+            raise HTTPException(400, "PLAN_HAS_NO_SERVERS")
+
+        price_rub = Decimal(plan.price_usdt) * Decimal(rate.rate)
+        order = Order(
+            idUser=user.idUser,
+            server_id=server_ids[0],
+            idTarif=None,
+            subscription_id=None,
+            bundle_subscription_id=bundle_sub.id,
+            bundle_plan_id=plan.id,
+            purpose_order="bundle_extension",
+            amount=Decimal(plan.price_usdt),
+            currency="USDT",
+            provider="yookassa",
+            status="pending",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ORDER_TTL_MINUTES)
+        )
+        session.add(order)
+        await session.flush()
+
+        payment_id, confirmation_url = await ykrq.create_yookassa_payment(
+            order.id,
+            price_rub,
+            f"Bundle VPN renew {plan.days} days"
+        )
+        order.payment_url = confirmation_url
+        session.add(Payment(order_id=order.id,provider="yookassa",provider_payment_id=payment_id,status="pending"))
+        await session.commit()
+
+        return {"confirmation_url": confirmation_url,"order_id": order.id,"amount_rub": str(price_rub)}
+
+
 
 # юkassa webhoock
 
@@ -916,8 +1422,8 @@ async def yookassa_webhook(request: Request):
             payment.status = "paid"
 
         user = await session.get(User, order.idUser)
-        tariff = await session.get(Tariff, order.idTarif)
-        server = await session.get(ServersVPN, order.server_id)
+        tariff = await session.get(Tariff, order.idTarif) if order.idTarif else None
+        server = await session.get(ServersVPN, order.server_id) if order.server_id else None
 
         try:
             if order.purpose_order == "buy":
@@ -943,6 +1449,43 @@ async def yookassa_webhook(request: Request):
                         f"♻️ <b>VPN успешно продлён!</b>\n"
                         f"➕ Добавлено дней: {vpn_data['days_added']}\n"
                         f"🕒 Новый срок: {vpn_data['expires_at_human']}"
+                    ),parse_mode="HTML"
+                )
+
+            elif order.purpose_order == "bundle_buy":
+                plan = await session.get(BundlePlan, order.bundle_plan_id)
+                server_ids = (await session.scalars(
+                    select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+                )).all()
+                servers = (await session.scalars(
+                    select(ServersVPN).where(ServersVPN.idServerVPN.in_(server_ids))
+                )).all()
+                bundle_sub = await berq.create_bundle_subscription(session, user.idUser, plan, servers)
+                order.bundle_subscription_id = bundle_sub.id
+                await bot.send_message(chat_id=user.tg_id,
+                    text=(
+                        f"✅ <b>VPN готов!</b>\n"
+                        f"План: Все сервера\n"
+                        f"Действует до: {rq.format_datetime_ru(bundle_sub.expires_at)}\n\n"
+                        f"<b>Ваша подписка:</b>\n"
+                        f"<code>{bundle_sub.subscription_url}</code>"
+                    ),parse_mode="HTML"
+                )
+
+            elif order.purpose_order == "bundle_extension":
+                bundle_sub = await session.get(BundleSubscription, order.bundle_subscription_id)
+                plan = await session.get(BundlePlan, bundle_sub.bundle_plan_id)
+                server_ids = (await session.scalars(
+                    select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
+                )).all()
+                servers = (await session.scalars(
+                    select(ServersVPN).where(ServersVPN.idServerVPN.in_(server_ids))
+                )).all()
+                await berq.extend_bundle_subscription(session, bundle_sub, plan, servers)
+                await bot.send_message(chat_id=user.tg_id,
+                    text=(
+                        f"♻️ <b>VPN успешно продлён!</b>\n"
+                        f"🕒 Новый срок: {rq.format_datetime_ru(bundle_sub.expires_at)}"
                     ),parse_mode="HTML"
                 )
 
@@ -987,6 +1530,31 @@ async def buy_from_balance(data: BuyFromBalanceRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class BuyBundleFromBalanceRequest(BaseModel):
+    tg_id: int
+    bundle_plan_id: int
+
+
+@app.post("/api/vpn/bundle/buy-from-balance")
+async def buy_bundle_from_balance(data: BuyBundleFromBalanceRequest):
+    try:
+        result = await berq.buy_bundle_from_balance(tg_id=data.tg_id, bundle_plan_id=data.bundle_plan_id)
+        await bot.send_message(chat_id=data.tg_id,
+            text=(
+                f"✅ <b>VPN готов!</b>\n"
+                f"План: Все сервера\n"
+                f"Действует до: {result['expires_at_human']}\n\n"
+                f"<b>Ваша подписка:</b>\n"
+                f"<code>{result['subscription_url']}</code>"
+            ),parse_mode="HTML"
+        )
+        return result
+    except Exception as e:
+        if str(e) == "NOT_ENOUGH_BALANCE":
+            raise HTTPException(status_code=400, detail="NOT_ENOUGH_BALANCE")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # продление С БАЛАНСА
 class RenewFromBalanceRequest(BaseModel):
     tg_id: int
@@ -1006,6 +1574,30 @@ async def renew_from_balance(data: RenewFromBalanceRequest):
         )
         return result
     
+    except Exception as e:
+        if str(e) == "NOT_ENOUGH_BALANCE":
+            raise HTTPException(400, "NOT_ENOUGH_BALANCE")
+        if str(e) == "ACTIVE_ORDER_EXISTS":
+            raise HTTPException(409, "ACTIVE_ORDER_EXISTS")
+        raise HTTPException(400, str(e))
+
+
+class RenewBundleFromBalanceRequest(BaseModel):
+    tg_id: int
+    bundle_subscription_id: int
+
+
+@app.post("/api/vpn/bundle/renew-from-balance")
+async def renew_bundle_from_balance(data: RenewBundleFromBalanceRequest):
+    try:
+        result = await berq.renew_bundle_from_balance(tg_id=data.tg_id, bundle_subscription_id=data.bundle_subscription_id)
+        await bot.send_message(chat_id=data.tg_id,
+            text=(
+                f"♻️ <b>VPN успешно продлён!</b>\n"
+                f"🕒 Новый срок: {result['expires_at_human']}"
+            ),parse_mode="HTML"
+        )
+        return result
     except Exception as e:
         if str(e) == "NOT_ENOUGH_BALANCE":
             raise HTTPException(400, "NOT_ENOUGH_BALANCE")
@@ -1371,6 +1963,45 @@ async def admin_update_promo_code(promo_id: int, data: PromoCodeUpdate):
 @app.delete("/api/admin/promo-codes/{promo_id}")
 async def admin_delete_promo_code(promo_id: int):
     return await rqadm.admin_delete_promo_code(promo_id)
+
+
+# ======================
+# ADMIN: BUNDLE PLANS
+# ======================
+class BundlePlanCreate(BaseModel):
+    name: str
+    price_usdt: Decimal
+    days: int
+    is_active: bool = True
+    server_ids: list[int] = []
+
+
+class BundlePlanUpdate(BaseModel):
+    name: str | None = None
+    price_usdt: Decimal | None = None
+    days: int | None = None
+    is_active: bool | None = None
+    server_ids: list[int] | None = None
+
+
+@app.get("/api/admin/bundle-plans")
+async def admin_get_bundle_plans():
+    return await rqadm.admin_get_bundle_plans()
+
+
+@app.post("/api/admin/bundle-plans")
+async def admin_add_bundle_plan(data: BundlePlanCreate):
+    return await rqadm.admin_add_bundle_plan(data.dict())
+
+
+@app.patch("/api/admin/bundle-plans/{plan_id}")
+async def admin_update_bundle_plan(plan_id: int, data: BundlePlanUpdate):
+    return await rqadm.admin_update_bundle_plan(plan_id, data.dict(exclude_unset=True))
+
+
+@app.delete("/api/admin/bundle-plans/{plan_id}")
+async def admin_delete_bundle_plan(plan_id: int):
+    return await rqadm.admin_delete_bundle_plan(plan_id)
 
 
 # ======================

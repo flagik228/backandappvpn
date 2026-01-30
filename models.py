@@ -202,6 +202,8 @@ class Order(Base):
     server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN"))
     idTarif: Mapped[int | None] = mapped_column(ForeignKey("tariffs.idTarif"), nullable=True)
     subscription_id: Mapped[int | None] = mapped_column(ForeignKey("vpn_subscriptions.id"),nullable=True)
+    bundle_plan_id: Mapped[int | None] = mapped_column(ForeignKey("bundle_plans.id"), nullable=True)
+    bundle_subscription_id: Mapped[int | None] = mapped_column(ForeignKey("bundle_subscriptions.id"), nullable=True)
     purpose_order: Mapped[str] = mapped_column(String(100)) # "buy", "extension"
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 6))
     currency: Mapped[str] = mapped_column(String(100))  # XTR / USDT
@@ -254,6 +256,53 @@ class VPNSubscription(Base):
     status: Mapped[str] = mapped_column(String(30), default="active")  # active / expired
     __table_args__ = (
         Index("idx_vpn_user_expires", "idUser", "expires_at"),
+    )
+
+
+# --- BUNDLE PLANS ---
+class BundlePlan(Base):
+    __tablename__ = "bundle_plans"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    price_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    days: Mapped[int] = mapped_column(Integer)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class BundleServer(Base):
+    __tablename__ = "bundle_servers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bundle_plan_id: Mapped[int] = mapped_column(ForeignKey("bundle_plans.id", ondelete="CASCADE"))
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN", ondelete="CASCADE"))
+
+    __table_args__ = (
+        UniqueConstraint("bundle_plan_id", "server_id", name="uq_bundle_plan_server"),
+    )
+
+
+class BundleSubscription(Base):
+    __tablename__ = "bundle_subscriptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"))
+    bundle_plan_id: Mapped[int] = mapped_column(ForeignKey("bundle_plans.id", ondelete="CASCADE"))
+    subscription_id: Mapped[str] = mapped_column(String(100))
+    subscription_url: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(30), default="active")
+
+
+class BundleSubscriptionItem(Base):
+    __tablename__ = "bundle_subscription_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bundle_subscription_id: Mapped[int] = mapped_column(ForeignKey("bundle_subscriptions.id", ondelete="CASCADE"))
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN", ondelete="CASCADE"))
+    client_email: Mapped[str] = mapped_column(String(200))
+    client_uuid: Mapped[str] = mapped_column(String(200))
+    __table_args__ = (
+        UniqueConstraint("bundle_subscription_id", "server_id", name="uq_bundle_sub_server"),
     )
 
 

@@ -1,7 +1,7 @@
 from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletOperation, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
-    UserFreeDaysBalance, UserRewardOp, UserCheckin, PromoCode, PromoCodeUsage)
+    UserFreeDaysBalance, UserRewardOp, UserCheckin, PromoCode, PromoCodeUsage, BundlePlan, BundleSubscription)
 from typing import List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -398,6 +398,43 @@ async def get_subscriptions_by_server(user_id: int, server_id: int) -> List[dict
                 "days_left": days_left,
                 "subscription_url": subscription_url,
                 "subscription_key": sub.subscription_id,
+            })
+        return result
+
+
+async def get_bundle_plans_active() -> List[dict]:
+    async with async_session() as session:
+        plans = (await session.scalars(select(BundlePlan).where(BundlePlan.is_active == True))).all()
+        return [{"id": p.id, "name": p.name, "price_usdt": str(p.price_usdt), "days": p.days} for p in plans]
+
+
+async def get_my_bundle_vpns(tg_id: int) -> List[dict]:
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            return []
+
+        now = datetime.now(timezone.utc)
+        rows = await session.execute(
+            select(BundleSubscription, BundlePlan)
+            .join(BundlePlan, BundleSubscription.bundle_plan_id == BundlePlan.id)
+            .where(BundleSubscription.idUser == user.idUser)
+            .order_by(BundleSubscription.expires_at.desc())
+        )
+
+        result = []
+        for sub, plan in rows:
+            is_active = sub.expires_at > now
+            result.append({
+                "bundle_subscription_id": sub.id,
+                "plan_id": plan.id,
+                "plan_name": plan.name,
+                "plan_days": plan.days,
+                "plan_price_usdt": str(plan.price_usdt),
+                "subscription_url": sub.subscription_url,
+                "expires_at": sub.expires_at.isoformat(),
+                "is_active": is_active,
+                "status": "active" if is_active else "expired"
             })
         return result
 
