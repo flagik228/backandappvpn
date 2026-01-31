@@ -181,6 +181,14 @@ async def get_user_wallet(tg_id: int):
         return {"balance_usdt": str(wallet.balance_usdt)}
 
 
+def _history_ts(dt: datetime | None) -> float:
+    if not dt:
+        return 0.0
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
 async def get_user_history(tg_id: int, limit: int = 200):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
@@ -214,38 +222,38 @@ async def get_user_history(tg_id: int, limit: int = 200):
 
         items = []
         for o in orders:
-            items.append((o.created_at, {
+            items.append((_history_ts(o.created_at), {
                 "id": o.id,
                 "source": "order",
                 "purpose": o.purpose_order,
                 "status": o.status,
                 "amount_usdt": str(o.amount),
                 "provider": o.provider,
-                "created_at": o.created_at.isoformat()
+                "created_at": o.created_at.isoformat() if o.created_at else None
             }))
 
         for op in operations:
             if op.type != "deposit":
                 continue
-            items.append((op.created_at, {
+            items.append((_history_ts(op.created_at), {
                 "id": op.id,
                 "source": "wallet_operation",
                 "purpose": op.type,
                 "status": op.status,
                 "amount_usdt": str(op.amount_usdt),
                 "provider": op.provider,
-                "created_at": op.created_at.isoformat()
+                "created_at": op.created_at.isoformat() if op.created_at else None
             }))
 
         for t in wallet_txs:
-            items.append((t.created_at, {
+            items.append((_history_ts(t.created_at), {
                 "id": t.id,
                 "source": "wallet_transaction",
                 "purpose": t.type,
                 "status": "completed",
                 "amount_usdt": str(t.amount),
                 "description": t.description,
-                "created_at": t.created_at.isoformat()
+                "created_at": t.created_at.isoformat() if t.created_at else None
             }))
 
         items.sort(key=lambda x: x[0], reverse=True)
@@ -445,9 +453,19 @@ async def has_active_subscription(tg_id: int) -> bool:
         if not user:
             return False
 
-        q = select(exists().where(VPNSubscription.idUser == user.idUser,VPNSubscription.is_active == True,VPNSubscription.expires_at > datetime.now(timezone.utc)))
+        now = datetime.now(timezone.utc)
+        q = select(exists().where(
+            VPNSubscription.idUser == user.idUser,
+            VPNSubscription.is_active == True,
+            VPNSubscription.expires_at > now
+        ))
+        bundle_q = select(exists().where(
+            BundleSubscription.idUser == user.idUser,
+            BundleSubscription.is_active == True,
+            BundleSubscription.expires_at > now
+        ))
 
-        return bool(await session.scalar(q))
+        return bool(await session.scalar(q)) or bool(await session.scalar(bundle_q))
 
 
 async def generate_unique_client_email(session,user_id: int,server: ServersVPN,xui: XUIApi) -> str:

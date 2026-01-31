@@ -15,7 +15,7 @@ import main as main
 async def create_order(user_id: int,server_id: int,tariff_id: int,amount_usdt: Decimal,purpose_order: str = "buy",currency: str = "XTR"):
     async with async_session() as session:
         order = Order(idUser=user_id,server_id=server_id,idTarif=tariff_id,purpose_order=purpose_order,
-            amount=int(amount_usdt),currency=currency,status="pending")
+            amount=Decimal(amount_usdt),currency=currency,status="pending")
         session.add(order)
         await session.commit()
         await session.refresh(order)
@@ -266,8 +266,18 @@ async def buy_bundle_from_balance(tg_id: int, bundle_plan_id: int):
         wallet.balance_usdt -= price
         session.add(WalletTransaction(wallet_id=wallet.id,amount=-price,type="buy",description=f"Bundle plan purchase ({plan.days} days)"))
 
-        order = Order(idUser=user.idUser,server_id=servers[0].idServerVPN,idTarif=None,purpose_order="buy",
-            amount=price,currency="USDT",provider="balance",status="processing")
+        order = Order(
+            idUser=user.idUser,
+            server_id=servers[0].idServerVPN,
+            idTarif=None,
+            subscription_id=None,
+            bundle_plan_id=plan.id,
+            purpose_order="bundle_buy",
+            amount=price,
+            currency="USDT",
+            provider="balance",
+            status="processing"
+        )
         session.add(order)
         await session.flush()
 
@@ -275,6 +285,7 @@ async def buy_bundle_from_balance(tg_id: int, bundle_plan_id: int):
         session.add(payment)
 
         bundle_sub = await create_bundle_subscription(session, user.idUser, plan, servers)
+        order.bundle_subscription_id = bundle_sub.id
 
         order.status = "completed"
         await session.commit()
@@ -329,7 +340,9 @@ async def renew_bundle_from_balance(tg_id: int, bundle_subscription_id: int):
             server_id=servers[0].idServerVPN,
             idTarif=None,
             subscription_id=None,
-            purpose_order="extension",
+            bundle_plan_id=plan.id,
+            bundle_subscription_id=bundle_sub.id,
+            purpose_order="bundle_extension",
             amount=price,
             currency="USDT",
             provider="balance",
