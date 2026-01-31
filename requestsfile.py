@@ -444,7 +444,6 @@ async def get_bundle_plans_active() -> List[dict]:
                 "id": p.id,
                 "name": p.name,
                 "price_usdt": str(p.price_usdt),
-                "days": p.days,
                 "tariffs": tariffs_data
             })
         return result
@@ -488,7 +487,6 @@ async def get_my_bundle_vpns(tg_id: int) -> List[dict]:
                 "bundle_subscription_id": sub.id,
                 "plan_id": plan.id,
                 "plan_name": plan.name,
-                "plan_days": plan.days,
                 "plan_price_usdt": str(plan.price_usdt),
                 "subscription_url": sub.subscription_url,
                 "expires_at": sub.expires_at.isoformat(),

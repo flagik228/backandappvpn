@@ -458,7 +458,6 @@ async def admin_get_bundle_plans():
                 "id": p.id,
                 "name": p.name,
                 "price_usdt": str(p.price_usdt),
-                "days": p.days,
                 "is_active": p.is_active,
                 "server_ids": servers
             })
@@ -470,7 +469,6 @@ async def admin_add_bundle_plan(data: dict):
         plan = BundlePlan(
             name=data["name"],
             price_usdt=data["price_usdt"],
-            days=data["days"],
             is_active=data.get("is_active", True)
         )
         session.add(plan)
@@ -490,7 +488,7 @@ async def admin_update_bundle_plan(plan_id: int, data: dict):
         if not plan:
             raise ValueError("BundlePlan not found")
 
-        for field in ["name", "price_usdt", "days", "is_active"]:
+        for field in ["name", "price_usdt", "is_active"]:
             if field in data:
                 setattr(plan, field, data[field])
 

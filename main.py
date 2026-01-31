@@ -733,7 +733,9 @@ async def successful_payment(message: Message):
                 plan = await session.get(BundlePlan, order.bundle_plan_id)
                 if not plan:
                     raise Exception("Bundle plan not found")
-                tariff_days = bundle_tariff.days if bundle_tariff else plan.days
+                if not bundle_tariff:
+                    raise Exception("Bundle tariff not found")
+                tariff_days = bundle_tariff.days
                 server_ids = (await session.scalars(
                     select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
                 )).all()
@@ -749,7 +751,9 @@ async def successful_payment(message: Message):
                 if not bundle_sub:
                     raise Exception("Bundle subscription not found")
                 plan = await session.get(BundlePlan, bundle_sub.bundle_plan_id)
-                tariff_days = bundle_tariff.days if bundle_tariff else plan.days
+                if not bundle_tariff:
+                    raise Exception("Bundle tariff not found")
+                tariff_days = bundle_tariff.days
                 server_ids = (await session.scalars(
                     select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
                 )).all()
@@ -1120,7 +1124,9 @@ async def crypto_webhook(data: dict):
                 plan = await session.get(BundlePlan, bundle_sub.bundle_plan_id)
             if not plan:
                 raise Exception("Bundle plan not found")
-            tariff_days = bundle_tariff.days if bundle_tariff else plan.days
+            if not bundle_tariff:
+                raise Exception("Bundle tariff not found")
+            tariff_days = bundle_tariff.days
             server_ids = (await session.scalars(
                 select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
             )).all()
@@ -1203,7 +1209,9 @@ async def crypto_webhook(data: dict):
                 plan = await session.get(BundlePlan, bundle_tariff.bundle_plan_id)
             if not plan:
                 raise Exception("Bundle plan not found")
-            tariff_days = bundle_tariff.days if bundle_tariff else plan.days
+            if not bundle_tariff:
+                raise Exception("Bundle tariff not found")
+            tariff_days = bundle_tariff.days
             server_ids = (await session.scalars(
                 select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
             )).all()
@@ -1565,7 +1573,9 @@ async def yookassa_webhook(request: Request):
                     plan = await session.get(BundlePlan, bundle_tariff.bundle_plan_id)
                 if not plan:
                     raise Exception("Bundle plan not found")
-                tariff_days = bundle_tariff.days if bundle_tariff else plan.days
+                if not bundle_tariff:
+                    raise Exception("Bundle tariff not found")
+                tariff_days = bundle_tariff.days
                 server_ids = (await session.scalars(
                     select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
                 )).all()
@@ -1591,7 +1601,9 @@ async def yookassa_webhook(request: Request):
                     plan = await session.get(BundlePlan, bundle_tariff.bundle_plan_id)
                 if not plan:
                     raise Exception("Bundle plan not found")
-                tariff_days = bundle_tariff.days if bundle_tariff else plan.days
+                if not bundle_tariff:
+                    raise Exception("Bundle tariff not found")
+                tariff_days = bundle_tariff.days
                 server_ids = (await session.scalars(
                     select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
                 )).all()
@@ -2093,7 +2105,6 @@ async def admin_delete_promo_code(promo_id: int):
 class BundlePlanCreate(BaseModel):
     name: str
     price_usdt: Decimal
-    days: int
     is_active: bool = True
     server_ids: list[int] = []
 
@@ -2101,7 +2112,6 @@ class BundlePlanCreate(BaseModel):
 class BundlePlanUpdate(BaseModel):
     name: str | None = None
     price_usdt: Decimal | None = None
-    days: int | None = None
     is_active: bool | None = None
     server_ids: list[int] | None = None
 
