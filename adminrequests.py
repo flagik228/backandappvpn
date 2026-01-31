@@ -278,7 +278,6 @@ async def admin_get_servers():
                 "now_conn": s.now_conn,
                 "server_ip": s.server_ip,
                 "api_url": s.api_url,
-                "api_token": s.api_token,
                 "xui_username": s.xui_username,
                 "xui_password": s.xui_password,
                 "inbound_port": s.inbound_port,
@@ -298,7 +297,6 @@ async def admin_add_server(data):
             now_conn=0,  # при создании новый сервер всегда 0
             server_ip=data.server_ip,
             api_url=data.api_url,
-            api_token=data.api_token,
             xui_username=data.xui_username,
             xui_password=data.xui_password,
             inbound_port=data.inbound_port,
@@ -330,7 +328,6 @@ async def admin_update_server(server_id: int, data):
                 max_conn=data["max_conn"],
                 server_ip=data["server_ip"],
                 api_url=data["api_url"],
-                api_token=data["api_token"],
                 xui_username=data["xui_username"],
                 xui_password=data["xui_password"],
                 inbound_port=data["inbound_port"],

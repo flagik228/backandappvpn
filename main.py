@@ -2013,7 +2013,6 @@ class ServerCreate(BaseModel):
     max_conn: int
     server_ip: str
     api_url: str
-    api_token: str
     xui_username: str
     xui_password: str
     inbound_port: int

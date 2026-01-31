@@ -103,7 +103,7 @@ https://YOUR_SERVER_IP:YOUR_PORT/WebBasePath
 | Поле в БД | Откуда взять |
 |-----------|--------------|
 | `server_ip` | IP вашего нового сервера |
-| `api_url` | `https://IP:ПОРТ_ПАНЕЛИ/WebBasePath` (без `/` в конце) |
+| `api_url` | `https://IP:ПОРТ_ПАНЕЛИ/WebBasePath` или `https://домен:ПОРТ/WebBasePath` (без `/` в конце) |
 | `xui_username` | Логин панели 3x-ui |
 | `xui_password` | Пароль панели 3x-ui |
 | `inbound_port` | Порт inbound (например 443) |
@@ -118,7 +118,6 @@ https://YOUR_SERVER_IP:YOUR_PORT/WebBasePath
   "max_conn": 500,
   "server_ip": "YOUR_NEW_SERVER_IP",
   "api_url": "https://YOUR_NEW_SERVER_IP:2053/AbCdEfGh123456",
-  "api_token": "",
   "xui_username": "admin",
   "xui_password": "your_secure_password",
   "inbound_port": 443,

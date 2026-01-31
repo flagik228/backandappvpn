@@ -28,7 +28,6 @@ Content-Type: application/json
   "max_conn": 500,
   "server_ip": "REPLACE_WITH_YOUR_SERVER_IP",
   "api_url": "https://REPLACE_WITH_YOUR_SERVER_IP:2053/REPLACE_WITH_YOUR_webBasePath",
-  "api_token": "",
   "xui_username": "REPLACE_WITH_YOUR_PANEL_USERNAME",
   "xui_password": "REPLACE_WITH_YOUR_PANEL_PASSWORD",
   "inbound_port": 443,

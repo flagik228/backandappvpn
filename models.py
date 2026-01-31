@@ -161,7 +161,6 @@ class ServersVPN(Base):
 
     server_ip: Mapped[str] = mapped_column(String(300))
     api_url: Mapped[str] = mapped_column(String(300))
-    api_token: Mapped[str] = mapped_column(String(300))
     xui_username: Mapped[str] = mapped_column(String(300))
     xui_password: Mapped[str] = mapped_column(String(300))
     inbound_port: Mapped[int] = mapped_column(Integer)
