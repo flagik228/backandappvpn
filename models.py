@@ -202,6 +202,7 @@ class Order(Base):
     idTarif: Mapped[int | None] = mapped_column(ForeignKey("tariffs.idTarif"), nullable=True)
     subscription_id: Mapped[int | None] = mapped_column(ForeignKey("vpn_subscriptions.id"),nullable=True)
     bundle_plan_id: Mapped[int | None] = mapped_column(ForeignKey("bundle_plans.id"), nullable=True)
+    bundle_tariff_id: Mapped[int | None] = mapped_column(ForeignKey("bundle_tariffs.id"), nullable=True)
     bundle_subscription_id: Mapped[int | None] = mapped_column(ForeignKey("bundle_subscriptions.id"), nullable=True)
     purpose_order: Mapped[str] = mapped_column(String(100)) # "buy", "extension"
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 6))
@@ -267,6 +268,20 @@ class BundlePlan(Base):
     days: Mapped[int] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class BundleTariff(Base):
+    __tablename__ = "bundle_tariffs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bundle_plan_id: Mapped[int] = mapped_column(ForeignKey("bundle_plans.id", ondelete="CASCADE"))
+    days: Mapped[int] = mapped_column(Integer)
+    price_usdt: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("bundle_plan_id", "days", name="uq_bundle_plan_days"),
+    )
 
 
 class BundleServer(Base):

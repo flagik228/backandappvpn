@@ -1,7 +1,7 @@
 from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
-    PromoCode, PromoCodeUsage, BundlePlan, BundleServer)
+    PromoCode, PromoCodeUsage, BundlePlan, BundleServer, BundleTariff)
 from typing import List
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -397,6 +397,47 @@ async def admin_delete_tariff(tariff_id: int):
         if not t:
             raise ValueError("Tariff not found")
 
+        await session.delete(t)
+        await session.commit()
+        return {"status": "ok"}
+
+
+# =========================================================
+# --- ADMIN: Bundle Tariffs
+# =========================================================
+async def admin_get_bundle_tariffs(bundle_plan_id: int):
+    async with async_session() as session:
+        tariffs = await session.scalars(
+            select(BundleTariff).where(BundleTariff.bundle_plan_id == bundle_plan_id)
+        )
+        return [{
+            "id": t.id,
+            "bundle_plan_id": t.bundle_plan_id,
+            "days": t.days,
+            "price_usdt": str(t.price_usdt),
+            "is_active": t.is_active
+        } for t in tariffs]
+
+
+async def admin_add_bundle_tariff(data: dict):
+    async with async_session() as session:
+        t = BundleTariff(
+            bundle_plan_id=data["bundle_plan_id"],
+            days=data["days"],
+            price_usdt=data["price_usdt"],
+            is_active=data.get("is_active", True)
+        )
+        session.add(t)
+        await session.commit()
+        await session.refresh(t)
+        return {"id": t.id}
+
+
+async def admin_delete_bundle_tariff(tariff_id: int):
+    async with async_session() as session:
+        t = await session.get(BundleTariff, tariff_id)
+        if not t:
+            raise ValueError("BundleTariff not found")
         await session.delete(t)
         await session.commit()
         return {"status": "ok"}

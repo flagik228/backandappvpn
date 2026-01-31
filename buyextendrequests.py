@@ -1,6 +1,6 @@
 from models import (async_session, User, UserWallet, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
-    BundlePlan, BundleServer, BundleSubscription, BundleSubscriptionItem)
+    BundlePlan, BundleServer, BundleSubscription, BundleSubscriptionItem, BundleTariff)
 from typing import List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -233,13 +233,17 @@ async def extend_vpn_from_balance(tg_id: int, subscription_id: int, tariff_id: i
 
 
 # BUNDLE: BUY/RENEW (ALL SERVERS)
-async def buy_bundle_from_balance(tg_id: int, bundle_plan_id: int):
+async def buy_bundle_from_balance(tg_id: int, bundle_tariff_id: int):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
         if not user:
             raise Exception("User not found")
 
-        plan = await session.get(BundlePlan, bundle_plan_id)
+        tariff = await session.get(BundleTariff, bundle_tariff_id)
+        if not tariff or not tariff.is_active:
+            raise Exception("Tariff not found")
+
+        plan = await session.get(BundlePlan, tariff.bundle_plan_id)
         if not plan or not plan.is_active:
             raise Exception("Plan not found")
 
@@ -259,12 +263,17 @@ async def buy_bundle_from_balance(tg_id: int, bundle_plan_id: int):
         if not wallet:
             raise Exception("Wallet not found")
 
-        price = Decimal(plan.price_usdt)
+        price = Decimal(tariff.price_usdt)
         if wallet.balance_usdt < price:
             raise Exception("NOT_ENOUGH_BALANCE")
 
         wallet.balance_usdt -= price
-        session.add(WalletTransaction(wallet_id=wallet.id,amount=-price,type="buy",description=f"Bundle plan purchase ({plan.days} days)"))
+        session.add(WalletTransaction(
+            wallet_id=wallet.id,
+            amount=-price,
+            type="buy",
+            description=f"Bundle plan purchase ({tariff.days} days)"
+        ))
 
         order = Order(
             idUser=user.idUser,
@@ -272,6 +281,7 @@ async def buy_bundle_from_balance(tg_id: int, bundle_plan_id: int):
             idTarif=None,
             subscription_id=None,
             bundle_plan_id=plan.id,
+            bundle_tariff_id=tariff.id,
             purpose_order="bundle_buy",
             amount=price,
             currency="USDT",
@@ -284,7 +294,7 @@ async def buy_bundle_from_balance(tg_id: int, bundle_plan_id: int):
         payment = Payment(order_id=order.id,provider="balance",provider_payment_id=f"balance_{order.id}",status="paid")
         session.add(payment)
 
-        bundle_sub = await create_bundle_subscription(session, user.idUser, plan, servers)
+        bundle_sub = await create_bundle_subscription(session, user.idUser, plan, servers, tariff.days)
         order.bundle_subscription_id = bundle_sub.id
 
         order.status = "completed"
@@ -298,7 +308,7 @@ async def buy_bundle_from_balance(tg_id: int, bundle_plan_id: int):
         }
 
 
-async def renew_bundle_from_balance(tg_id: int, bundle_subscription_id: int):
+async def renew_bundle_from_balance(tg_id: int, bundle_subscription_id: int, bundle_tariff_id: int):
     async with async_session() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
         if not user:
@@ -308,9 +318,16 @@ async def renew_bundle_from_balance(tg_id: int, bundle_subscription_id: int):
         if not bundle_sub or bundle_sub.idUser != user.idUser:
             raise Exception("Subscription not found")
 
-        plan = await session.get(BundlePlan, bundle_sub.bundle_plan_id)
+        tariff = await session.get(BundleTariff, bundle_tariff_id)
+        if not tariff or not tariff.is_active:
+            raise Exception("Tariff not found")
+
+        plan = await session.get(BundlePlan, tariff.bundle_plan_id)
         if not plan or not plan.is_active:
             raise Exception("Plan not found")
+
+        if plan.id != bundle_sub.bundle_plan_id:
+            raise Exception("TARIFF_NOT_ALLOWED_FOR_THIS_BUNDLE")
 
         server_ids = (await session.scalars(
             select(BundleServer.server_id).where(BundleServer.bundle_plan_id == plan.id)
@@ -328,12 +345,17 @@ async def renew_bundle_from_balance(tg_id: int, bundle_subscription_id: int):
         if not wallet:
             raise Exception("Wallet not found")
 
-        price = Decimal(plan.price_usdt)
+        price = Decimal(tariff.price_usdt)
         if wallet.balance_usdt < price:
             raise Exception("NOT_ENOUGH_BALANCE")
 
         wallet.balance_usdt -= price
-        session.add(WalletTransaction(wallet_id=wallet.id,amount=-price,type="extend",description=f"Bundle plan renew ({plan.days} days)"))
+        session.add(WalletTransaction(
+            wallet_id=wallet.id,
+            amount=-price,
+            type="extend",
+            description=f"Bundle plan renew ({tariff.days} days)"
+        ))
 
         order = Order(
             idUser=user.idUser,
@@ -342,6 +364,7 @@ async def renew_bundle_from_balance(tg_id: int, bundle_subscription_id: int):
             subscription_id=None,
             bundle_plan_id=plan.id,
             bundle_subscription_id=bundle_sub.id,
+            bundle_tariff_id=tariff.id,
             purpose_order="bundle_extension",
             amount=price,
             currency="USDT",
@@ -352,13 +375,13 @@ async def renew_bundle_from_balance(tg_id: int, bundle_subscription_id: int):
         await session.flush()
         session.add(Payment(order_id=order.id,provider="balance",provider_payment_id=f"balance_{order.id}",status="paid"))
 
-        await extend_bundle_subscription(session, bundle_sub, plan, servers)
+        await extend_bundle_subscription(session, bundle_sub, plan, servers, tariff.days)
 
         now = datetime.utcnow()
         if bundle_sub.expires_at and bundle_sub.expires_at > now:
-            bundle_sub.expires_at = bundle_sub.expires_at + timedelta(days=plan.days)
+            bundle_sub.expires_at = bundle_sub.expires_at + timedelta(days=tariff.days)
         else:
-            bundle_sub.expires_at = now + timedelta(days=plan.days)
+            bundle_sub.expires_at = now + timedelta(days=tariff.days)
 
         bundle_sub.is_active = True
         bundle_sub.status = "active"
@@ -368,16 +391,15 @@ async def renew_bundle_from_balance(tg_id: int, bundle_subscription_id: int):
 
         return {
             "subscription_url": bundle_sub.subscription_url,
-            "days_added": plan.days,
+            "days_added": tariff.days,
             "expires_at_human": rq.format_datetime_ru(bundle_sub.expires_at),
             "plan_name": plan.name
         }
 
 
-async def create_bundle_subscription(session, user_id: int, plan: BundlePlan, servers: list[ServersVPN]) -> BundleSubscription:
+async def create_bundle_subscription(session, user_id: int, plan: BundlePlan, servers: list[ServersVPN], tariff_days: int) -> BundleSubscription:
     sub_id = uuid_lib.uuid4().hex[:16]
-    subscription_url = None
-    expires_at = datetime.utcnow() + timedelta(days=plan.days)
+    expires_at = datetime.utcnow() + timedelta(days=tariff_days)
 
     bundle_sub = BundleSubscription(
         idUser=user_id,
@@ -392,15 +414,15 @@ async def create_bundle_subscription(session, user_id: int, plan: BundlePlan, se
     session.add(bundle_sub)
     await session.flush()
 
+    subscription_url = rq.build_bundle_subscription_url(bundle_sub.id)
+
     for server in servers:
         xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
             raise Exception("Inbound not found")
         client_email = await rq.generate_unique_client_email(session, user_id, server, xui)
-        client = await xui.add_client(inbound_id=inbound.id, email=client_email, days=plan.days, sub_id=sub_id)
-        if not subscription_url:
-            subscription_url = rq.build_subscription_url(server, sub_id)
+        client = await xui.add_client(inbound_id=inbound.id, email=client_email, days=tariff_days, sub_id=sub_id)
 
         session.add(BundleSubscriptionItem(
             bundle_subscription_id=bundle_sub.id,
@@ -409,15 +431,12 @@ async def create_bundle_subscription(session, user_id: int, plan: BundlePlan, se
             client_uuid=client["uuid"]
         ))
 
-    if not subscription_url:
-        raise Exception("SUBSCRIPTION_URL_UNAVAILABLE")
-
     bundle_sub.subscription_id = sub_id
     bundle_sub.subscription_url = subscription_url
     return bundle_sub
 
 
-async def extend_bundle_subscription(session, bundle_sub: BundleSubscription, plan: BundlePlan, servers: list[ServersVPN]):
+async def extend_bundle_subscription(session, bundle_sub: BundleSubscription, plan: BundlePlan, servers: list[ServersVPN], tariff_days: int):
     items = (await session.scalars(
         select(BundleSubscriptionItem).where(BundleSubscriptionItem.bundle_subscription_id == bundle_sub.id)
     )).all()
@@ -434,14 +453,14 @@ async def extend_bundle_subscription(session, bundle_sub: BundleSubscription, pl
         await xui.extend_client(
             inbound_id=inbound.id,
             client_email=item.client_email,
-            days=plan.days,
+            days=tariff_days,
             sub_id=bundle_sub.subscription_id
         )
 
     now = datetime.utcnow()
     if bundle_sub.expires_at and bundle_sub.expires_at > now:
-        bundle_sub.expires_at = bundle_sub.expires_at + timedelta(days=plan.days)
+        bundle_sub.expires_at = bundle_sub.expires_at + timedelta(days=tariff_days)
     else:
-        bundle_sub.expires_at = now + timedelta(days=plan.days)
+        bundle_sub.expires_at = now + timedelta(days=tariff_days)
     bundle_sub.is_active = True
     bundle_sub.status = "active"

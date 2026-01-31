@@ -1,7 +1,9 @@
+import os
 from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletOperation, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
-    UserFreeDaysBalance, UserRewardOp, UserCheckin, PromoCode, PromoCodeUsage, BundlePlan, BundleSubscription)
+    UserFreeDaysBalance, UserRewardOp, UserCheckin, PromoCode, PromoCodeUsage, BundlePlan, BundleSubscription,
+    BundleTariff)
 from typing import List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -9,6 +11,8 @@ from sqlalchemy import select, func, exists
 from sqlalchemy.orm import aliased
 from urllib.parse import quote, urlparse
 from xui_api import XUIApi
+
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://artcryvpnbot.lunaweb.ru").rstrip("/")
 
 
 # USERS
@@ -354,6 +358,10 @@ def build_subscription_url(server: ServersVPN, sub_id: str | None) -> str | None
     return f"{scheme}://{host}:{port}/sub/{sub_id}"
 
 
+def build_bundle_subscription_url(bundle_sub_id: int) -> str:
+    return f"{PUBLIC_BASE_URL}/api/vpn/bundle/sub/{bundle_sub_id}"
+
+
 # MY VPNs
 async def get_my_vpns(tg_id: int) -> List[dict]:
     async with async_session() as session:
@@ -413,7 +421,33 @@ async def get_subscriptions_by_server(user_id: int, server_id: int) -> List[dict
 async def get_bundle_plans_active() -> List[dict]:
     async with async_session() as session:
         plans = (await session.scalars(select(BundlePlan).where(BundlePlan.is_active == True))).all()
-        return [{"id": p.id, "name": p.name, "price_usdt": str(p.price_usdt), "days": p.days} for p in plans]
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        rate_val = rate.rate if rate else Decimal("1")
+        result = []
+        for p in plans:
+            tariffs = (await session.scalars(
+                select(BundleTariff)
+                .where(BundleTariff.bundle_plan_id == p.id, BundleTariff.is_active == True)
+            )).all()
+            tariffs_data = []
+            for t in tariffs:
+                price_stars = int(Decimal(t.price_usdt) / rate_val)
+                if price_stars < 1:
+                    price_stars = 1
+                tariffs_data.append({
+                    "id": t.id,
+                    "days": t.days,
+                    "price_usdt": str(t.price_usdt),
+                    "price_stars": price_stars
+                })
+            result.append({
+                "id": p.id,
+                "name": p.name,
+                "price_usdt": str(p.price_usdt),
+                "days": p.days,
+                "tariffs": tariffs_data
+            })
+        return result
 
 
 async def get_my_bundle_vpns(tg_id: int) -> List[dict]:
@@ -423,6 +457,8 @@ async def get_my_bundle_vpns(tg_id: int) -> List[dict]:
             return []
 
         now = datetime.now(timezone.utc)
+        rate = await session.scalar(select(ExchangeRate).where(ExchangeRate.pair == "XTR_USDT"))
+        rate_val = rate.rate if rate else Decimal("1")
         rows = await session.execute(
             select(BundleSubscription, BundlePlan)
             .join(BundlePlan, BundleSubscription.bundle_plan_id == BundlePlan.id)
@@ -433,6 +469,21 @@ async def get_my_bundle_vpns(tg_id: int) -> List[dict]:
         result = []
         for sub, plan in rows:
             is_active = sub.expires_at > now
+            tariffs = (await session.scalars(
+                select(BundleTariff)
+                .where(BundleTariff.bundle_plan_id == plan.id, BundleTariff.is_active == True)
+            )).all()
+            tariffs_data = []
+            for t in tariffs:
+                price_stars = int(Decimal(t.price_usdt) / rate_val)
+                if price_stars < 1:
+                    price_stars = 1
+                tariffs_data.append({
+                    "id": t.id,
+                    "days": t.days,
+                    "price_usdt": str(t.price_usdt),
+                    "price_stars": price_stars
+                })
             result.append({
                 "bundle_subscription_id": sub.id,
                 "plan_id": plan.id,
@@ -442,7 +493,8 @@ async def get_my_bundle_vpns(tg_id: int) -> List[dict]:
                 "subscription_url": sub.subscription_url,
                 "expires_at": sub.expires_at.isoformat(),
                 "is_active": is_active,
-                "status": "active" if is_active else "expired"
+                "status": "active" if is_active else "expired",
+                "tariffs": tariffs_data
             })
         return result
 
