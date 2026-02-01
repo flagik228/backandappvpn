@@ -545,6 +545,29 @@ async def generate_unique_client_email(session,user_id: int,server: ServersVPN,x
     return f"{prefix}{next_num}@artcry"
 
 
+async def generate_unique_bundle_client_email(session, user_id: int, server: ServersVPN, xui: XUIApi) -> str:
+    country = await session.get(CountriesVPN, server.idCountry)
+    country_code = country.nameCountry.upper()[:3]
+
+    inbound = await xui.get_inbound_by_port(server.inbound_port)
+    if not inbound:
+        raise Exception("Inbound not found")
+
+    existing = inbound.settings.clients or []
+
+    prefix = f"{country_code}-ОБЩАЯ-{user_id}-"
+    nums = []
+    for c in existing:
+        if c.email.startswith(prefix):
+            try:
+                nums.append(int(c.email.split("-")[-1].split("@")[0]))
+            except Exception:
+                pass
+
+    next_num = max(nums) + 1 if nums else 1
+    return f"{prefix}{next_num}@artcry"
+
+
 # REFERRALS
 async def get_referrals_count(tg_id: int) -> int:
     async with async_session() as session:

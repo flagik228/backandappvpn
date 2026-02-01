@@ -340,8 +340,19 @@ async def bundle_subscription(access_token: str):
             return ""
         return ""
 
+    async def fetch_with_retries(url: str, retries: int = 2, delay_sec: float = 0.6) -> str:
+        last = ""
+        for attempt in range(retries + 1):
+            last = await asyncio.to_thread(fetch_subscription, url)
+            if last.strip():
+                return last
+            if attempt < retries:
+                await asyncio.sleep(delay_sec)
+        logger.warning("Bundle sub empty after retries: %s", url)
+        return last
+
     texts = await asyncio.gather(*[
-        asyncio.to_thread(fetch_subscription, url) for url in sub_urls
+        fetch_with_retries(url) for url in sub_urls
     ])
 
     lines = []
