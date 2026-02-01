@@ -358,8 +358,12 @@ def build_subscription_url(server: ServersVPN, sub_id: str | None) -> str | None
     return f"{scheme}://{host}:{port}/sub/{sub_id}"
 
 
-def build_bundle_subscription_url(bundle_sub_id: int) -> str:
-    return f"{PUBLIC_BASE_URL}/api/vpn/bundle/sub/{bundle_sub_id}"
+def build_bundle_subscription_url(token: str) -> str:
+    return f"{PUBLIC_BASE_URL}/api/vpn/bundle/sub/{token}"
+
+
+def build_single_subscription_url(token: str) -> str:
+    return f"{PUBLIC_BASE_URL}/api/vpn/sub/{token}"
 
 
 # MY VPNs
@@ -376,7 +380,7 @@ async def get_my_vpns(tg_id: int) -> List[dict]:
         result = []
         for sub, server in rows:
             is_active = sub.expires_at > now
-            subscription_url = build_subscription_url(server, sub.subscription_id) or sub.subscription_url
+            subscription_url = build_single_subscription_url(sub.access_token) or sub.subscription_url
             result.append({"subscription_id": sub.id,"server_id": server.idServerVPN,"serverName": server.nameVPN,
                 "subscription_url": subscription_url,"subscription_key": sub.subscription_id,
                 "expires_at": sub.expires_at.isoformat(),"is_active": is_active,"status": "active" if is_active else "expired"})
@@ -402,7 +406,7 @@ async def get_subscriptions_by_server(user_id: int, server_id: int) -> List[dict
             is_active = sub.expires_at > now
             delta = sub.expires_at - now
             days_left = max(0, (delta.days + (1 if delta.seconds > 0 else 0)))
-            subscription_url = build_subscription_url(server, sub.subscription_id) or sub.subscription_url
+            subscription_url = build_single_subscription_url(sub.access_token) or sub.subscription_url
             result.append({
                 "subscription_id": sub.id,
                 "server_id": server.idServerVPN,

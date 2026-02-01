@@ -46,12 +46,14 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
         now = datetime.utcnow()
         expires_at = now + timedelta(days=tariff_days)
 
-        subscription_url = rq.build_subscription_url(server, sub_id)
+        access_token = uuid_lib.uuid4().hex
+        subscription_url = rq.build_single_subscription_url(access_token)
         if not subscription_url:
             raise Exception("SUBSCRIPTION_URL_UNAVAILABLE")
 
         subscription = VPNSubscription(idUser=user_id,idServerVPN=server_id,provider="xui",provider_client_email=client_email,
             provider_client_uuid=client_uuid,subscription_id=sub_id,subscription_url=subscription_url,
+            access_token=access_token,
             created_at=now,expires_at=expires_at,is_active=True,status="active")
 
         session.add(subscription)
@@ -87,7 +89,7 @@ async def pay_and_extend_vpn(subscription_id: int, tariff_id: int):
         )
         if not sub.subscription_id and extend_result.get("sub_id"):
             sub.subscription_id = extend_result["sub_id"]
-            sub.subscription_url = rq.build_subscription_url(server, sub.subscription_id)
+            sub.subscription_url = rq.build_single_subscription_url(sub.access_token)
 
         now = datetime.now(timezone.utc)
 
@@ -399,12 +401,14 @@ async def renew_bundle_from_balance(tg_id: int, bundle_subscription_id: int, bun
 
 async def create_bundle_subscription(session, user_id: int, plan: BundlePlan, servers: list[ServersVPN], tariff_days: int) -> BundleSubscription:
     sub_id = uuid_lib.uuid4().hex[:16]
+    access_token = uuid_lib.uuid4().hex
     expires_at = datetime.utcnow() + timedelta(days=tariff_days)
 
     bundle_sub = BundleSubscription(
         idUser=user_id,
         bundle_plan_id=plan.id,
         subscription_id=sub_id,
+        access_token=access_token,
         subscription_url="",
         created_at=datetime.utcnow(),
         expires_at=expires_at,
@@ -414,7 +418,7 @@ async def create_bundle_subscription(session, user_id: int, plan: BundlePlan, se
     session.add(bundle_sub)
     await session.flush()
 
-    subscription_url = rq.build_bundle_subscription_url(bundle_sub.id)
+    subscription_url = rq.build_bundle_subscription_url(access_token)
 
     for server in servers:
         xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
@@ -423,12 +427,14 @@ async def create_bundle_subscription(session, user_id: int, plan: BundlePlan, se
             raise Exception("Inbound not found")
         client_email = await rq.generate_unique_client_email(session, user_id, server, xui)
         client = await xui.add_client(inbound_id=inbound.id, email=client_email, days=tariff_days, sub_id=sub_id)
+        item_sub_id = client.get("sub_id") or sub_id
 
         session.add(BundleSubscriptionItem(
             bundle_subscription_id=bundle_sub.id,
             server_id=server.idServerVPN,
             client_email=client_email,
-            client_uuid=client["uuid"]
+            client_uuid=client["uuid"],
+            subscription_id=item_sub_id
         ))
 
     bundle_sub.subscription_id = sub_id
@@ -454,7 +460,7 @@ async def extend_bundle_subscription(session, bundle_sub: BundleSubscription, pl
             inbound_id=inbound.id,
             client_email=item.client_email,
             days=tariff_days,
-            sub_id=bundle_sub.subscription_id
+            sub_id=item.subscription_id or bundle_sub.subscription_id
         )
 
     now = datetime.utcnow()

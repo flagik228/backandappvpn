@@ -247,6 +247,7 @@ class VPNSubscription(Base):
     provider_client_email: Mapped[str] = mapped_column(String(200), index=True)
     provider_client_uuid: Mapped[str] = mapped_column(String(200))
     subscription_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    access_token: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     subscription_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
@@ -300,6 +301,7 @@ class BundleSubscription(Base):
     idUser: Mapped[int] = mapped_column(ForeignKey("users.idUser", ondelete="CASCADE"))
     bundle_plan_id: Mapped[int] = mapped_column(ForeignKey("bundle_plans.id", ondelete="CASCADE"))
     subscription_id: Mapped[str] = mapped_column(String(100))
+    access_token: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     subscription_url: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -314,6 +316,7 @@ class BundleSubscriptionItem(Base):
     server_id: Mapped[int] = mapped_column(ForeignKey("servers_vpn.idServerVPN", ondelete="CASCADE"))
     client_email: Mapped[str] = mapped_column(String(200))
     client_uuid: Mapped[str] = mapped_column(String(200))
+    subscription_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     __table_args__ = (
         UniqueConstraint("bundle_subscription_id", "server_id", name="uq_bundle_sub_server"),
     )

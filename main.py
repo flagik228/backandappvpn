@@ -37,6 +37,11 @@ WEBHOOK_PATH = "/webhook"
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
+SUB_PROFILE_TITLE = "Artcry VPN"
+SUB_UPDATE_INTERVAL_HOURS = "1"
+SUB_SUPPORT_URL = "https://t.me/testvpnartcrybot"
+SUB_WEB_PAGE_URL = "https://t.me/testvpnartcrybot"
+
 
 # ======================
 # APP
@@ -256,10 +261,45 @@ async def my_bundle_vpns(tg_id: int):
     return await rq.get_my_bundle_vpns(tg_id)
 
 
-@app.get("/api/vpn/bundle/sub/{bundle_sub_id}")
-async def bundle_subscription(bundle_sub_id: int):
+@app.get("/api/vpn/sub/{token}")
+async def single_subscription(token: str):
     async with async_session() as session:
-        bundle_sub = await session.get(BundleSubscription, bundle_sub_id)
+        sub = await session.scalar(select(VPNSubscription).where(VPNSubscription.access_token == token))
+        if not sub:
+            raise HTTPException(404, "Subscription not found")
+        server = await session.get(ServersVPN, sub.idServerVPN)
+        if not server:
+            raise HTTPException(404, "Server not found")
+
+    url = rq.build_subscription_url(server, sub.subscription_id)
+    if not url:
+        raise HTTPException(400, "SUBSCRIPTION_URL_UNAVAILABLE")
+
+    try:
+        resp = requests.get(url, timeout=10, verify=False, headers={"User-Agent": "ArtCryVPN/1.0"})
+        if resp.status_code != 200:
+            raise Exception(f"status={resp.status_code}")
+        content = resp.text
+    except Exception as e:
+        logger.exception("Single sub fetch error: %s", e)
+        raise HTTPException(502, "SUBSCRIPTION_FETCH_FAILED")
+
+    headers = {
+        "profile-title": SUB_PROFILE_TITLE,
+        "profile-update-interval": SUB_UPDATE_INTERVAL_HOURS,
+        "support-url": SUB_SUPPORT_URL,
+        "profile-web-page-url": SUB_WEB_PAGE_URL,
+        "subscription-userinfo": f"expire={int(sub.expires_at.timestamp())}",
+    }
+    return Response(content=content, media_type="text/plain; charset=utf-8", headers=headers)
+
+
+@app.get("/api/vpn/bundle/sub/{access_token}")
+async def bundle_subscription(access_token: str):
+    async with async_session() as session:
+        bundle_sub = await session.scalar(
+            select(BundleSubscription).where(BundleSubscription.access_token == access_token)
+        )
         if not bundle_sub:
             raise HTTPException(404, "Bundle subscription not found")
 
@@ -274,8 +314,9 @@ async def bundle_subscription(bundle_sub_id: int):
         raise HTTPException(404, "Bundle subscription items not found")
 
     sub_urls = []
-    for _, server in items:
-        url = rq.build_subscription_url(server, bundle_sub.subscription_id)
+    for item, server in items:
+        sub_id = item.subscription_id or bundle_sub.subscription_id
+        url = rq.build_subscription_url(server, sub_id)
         if url:
             sub_urls.append(url)
 
@@ -284,10 +325,18 @@ async def bundle_subscription(bundle_sub_id: int):
 
     def fetch_subscription(url: str) -> str:
         try:
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, timeout=10, verify=False, headers={"User-Agent": "ArtCryVPN/1.0"})
             if resp.status_code == 200:
                 return resp.text
+            if url.startswith("https://"):
+                http_url = "http://" + url[len("https://"):]
+                resp = requests.get(http_url, timeout=10, verify=False, headers={"User-Agent": "ArtCryVPN/1.0"})
+                if resp.status_code == 200:
+                    logger.info("Bundle sub fetch fallback to http: %s", http_url)
+                    return resp.text
+            logger.warning("Bundle sub fetch failed: %s status=%s", url, resp.status_code)
         except Exception:
+            logger.exception("Bundle sub fetch error: %s", url)
             return ""
         return ""
 
@@ -305,7 +354,14 @@ async def bundle_subscription(bundle_sub_id: int):
             seen.add(line)
             lines.append(line)
 
-    return Response(content="\n".join(lines), media_type="text/plain; charset=utf-8")
+    headers = {
+        "profile-title": SUB_PROFILE_TITLE,
+        "profile-update-interval": SUB_UPDATE_INTERVAL_HOURS,
+        "support-url": SUB_SUPPORT_URL,
+        "profile-web-page-url": SUB_WEB_PAGE_URL,
+        "subscription-userinfo": f"expire={int(bundle_sub.expires_at.timestamp())}",
+    }
+    return Response(content="\n".join(lines), media_type="text/plain; charset=utf-8", headers=headers)
 
 
 # === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =====
