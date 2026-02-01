@@ -33,6 +33,7 @@ async def create_vpn_xui(user_id: int, server_id: int, tariff_days: int):
 
         xui = XUIApi(server.api_url, server.xui_username, server.xui_password)
         client_email = await rq.generate_unique_bundle_client_email(session, user_id, server, xui)
+        main.logger.info("Bundle client email: server=%s email=%s", server.nameVPN, client_email)
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
             raise Exception("Inbound not found")

@@ -290,6 +290,10 @@ async def single_subscription(token: str):
         "support-url": SUB_SUPPORT_URL,
         "profile-web-page-url": SUB_WEB_PAGE_URL,
         "subscription-userinfo": f"expire={int(sub.expires_at.timestamp())}",
+        "update-always": "true",
+        "Cache-Control": "no-store, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
     }
     return Response(content=content, media_type="text/plain; charset=utf-8", headers=headers)
 
@@ -365,12 +369,21 @@ async def bundle_subscription(access_token: str):
             seen.add(line)
             lines.append(line)
 
+    for url, text in zip(sub_urls, texts):
+        if not text.strip():
+            logger.warning("Bundle sub empty content: %s", url)
+    logger.info("Bundle sub aggregated configs=%s urls=%s", len(lines), len(sub_urls))
+
     headers = {
         "profile-title": SUB_PROFILE_TITLE,
         "profile-update-interval": SUB_UPDATE_INTERVAL_HOURS,
         "support-url": SUB_SUPPORT_URL,
         "profile-web-page-url": SUB_WEB_PAGE_URL,
         "subscription-userinfo": f"expire={int(bundle_sub.expires_at.timestamp())}",
+        "update-always": "true",
+        "Cache-Control": "no-store, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
     }
     return Response(content="\n".join(lines), media_type="text/plain; charset=utf-8", headers=headers)
 
