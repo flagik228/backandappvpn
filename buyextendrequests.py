@@ -426,7 +426,8 @@ async def create_bundle_subscription(session, user_id: int, plan: BundlePlan, se
         inbound = await xui.get_inbound_by_port(server.inbound_port)
         if not inbound:
             raise Exception("Inbound not found")
-        client_email = await rq.generate_unique_client_email(session, user_id, server, xui)
+        client_email = await rq.generate_unique_bundle_client_email(session, user_id, server, xui)
+        main.logger.info("Bundle client email: server=%s email=%s", server.nameVPN, client_email)
         client = await xui.add_client(inbound_id=inbound.id, email=client_email, days=tariff_days, sub_id=sub_id)
         item_sub_id = client.get("sub_id") or sub_id
 
