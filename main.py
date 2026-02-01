@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, update, delete, and_, or_
 from sqlalchemy.exc import SQLAlchemyError
 import logging
+import base64
 import requests
 import os
 
@@ -359,21 +360,39 @@ async def bundle_subscription(access_token: str):
         fetch_with_retries(url) for url in sub_urls
     ])
 
-    lines = []
-    seen = set()
+    raw_lines = []
     for text in texts:
         for line in text.splitlines():
             line = line.strip()
-            if not line or line in seen:
+            if line:
+                raw_lines.append(line)
+
+    def decode_if_base64(line: str) -> list[str]:
+        # Try to decode base64 subscriptions into URI lines.
+        try:
+            decoded = base64.b64decode(line + "==", validate=False).decode("utf-8", errors="ignore")
+            decoded_lines = [l.strip() for l in decoded.splitlines() if l.strip()]
+            if decoded_lines:
+                return decoded_lines
+        except Exception:
+            pass
+        return [line]
+
+    merged = []
+    seen = set()
+    for line in raw_lines:
+        for item in decode_if_base64(line):
+            if item in seen:
                 continue
-            seen.add(line)
-            lines.append(line)
+            seen.add(item)
+            merged.append(item)
 
     for url, text in zip(sub_urls, texts):
         if not text.strip():
             logger.warning("Bundle sub empty content: %s", url)
-    logger.info("Bundle sub aggregated configs=%s urls=%s", len(lines), len(sub_urls))
+    logger.info("Bundle sub aggregated raw=%s merged=%s urls=%s", len(raw_lines), len(merged), len(sub_urls))
 
+    encoded = base64.b64encode("\n".join(merged).encode("utf-8")).decode("utf-8")
     headers = {
         "profile-title": SUB_PROFILE_TITLE,
         "profile-update-interval": SUB_UPDATE_INTERVAL_HOURS,
@@ -385,7 +404,7 @@ async def bundle_subscription(access_token: str):
         "Pragma": "no-cache",
         "Expires": "0",
     }
-    return Response(content="\n".join(lines), media_type="text/plain; charset=utf-8", headers=headers)
+    return Response(content=encoded, media_type="text/plain; charset=utf-8", headers=headers)
 
 
 # === КАСАЕМО ПОКУПКИ, ПРОДЛЕНИЯ И ОПЛАТ =====
