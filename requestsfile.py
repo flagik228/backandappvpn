@@ -1,4 +1,5 @@
 import os
+import re
 from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletOperation, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
@@ -524,7 +525,7 @@ async def has_active_subscription(tg_id: int) -> bool:
 
 async def generate_unique_client_email(session,user_id: int,server: ServersVPN,xui: XUIApi) -> str:
     country = await session.get(CountriesVPN, server.idCountry)
-    country_code = country.nameCountry.upper()[:3]
+    country_name = country.nameCountry
 
     inbound = await xui.get_inbound_by_port(server.inbound_port)
     if not inbound:
@@ -532,22 +533,25 @@ async def generate_unique_client_email(session,user_id: int,server: ServersVPN,x
 
     existing = inbound.settings.clients or []
 
-    prefix = f"{country_code}-{user_id}-"
+    prefix = f"{country_name} - {user_id},"
+    pattern = re.compile(rf"^{re.escape(country_name)}\s*-\s*{user_id},(\d+)$")
     nums = []
     for c in existing:
-        if c.email.startswith(prefix):
+        email = (c.email or "").split("@")[0]
+        match = pattern.match(email)
+        if match:
             try:
-                nums.append(int(c.email.split("-")[-1].split("@")[0]))
-            except:
+                nums.append(int(match.group(1)))
+            except ValueError:
                 pass
 
     next_num = max(nums) + 1 if nums else 1
-    return f"{prefix}{next_num}@artcry"
+    return f"{prefix}{next_num}"
 
 
 async def generate_unique_bundle_client_email(session, user_id: int, server: ServersVPN, xui: XUIApi) -> str:
     country = await session.get(CountriesVPN, server.idCountry)
-    country_code = country.nameCountry.upper()[:3]
+    country_name = country.nameCountry
 
     inbound = await xui.get_inbound_by_port(server.inbound_port)
     if not inbound:
@@ -555,17 +559,20 @@ async def generate_unique_bundle_client_email(session, user_id: int, server: Ser
 
     existing = inbound.settings.clients or []
 
-    prefix = f"{country_code}-ОБЩАЯ-{user_id}-"
+    prefix = f"{country_name} - {user_id},"
+    pattern = re.compile(rf"^{re.escape(country_name)}\s*-\s*{user_id},(\d+)-plan$")
     nums = []
     for c in existing:
-        if c.email.startswith(prefix):
+        email = (c.email or "").split("@")[0]
+        match = pattern.match(email)
+        if match:
             try:
-                nums.append(int(c.email.split("-")[-1].split("@")[0]))
-            except Exception:
+                nums.append(int(match.group(1)))
+            except ValueError:
                 pass
 
     next_num = max(nums) + 1 if nums else 1
-    return f"{prefix}{next_num}@artcry"
+    return f"{prefix}{next_num}-plan"
 
 
 # REFERRALS
