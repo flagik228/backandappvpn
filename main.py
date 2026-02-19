@@ -2230,6 +2230,12 @@ class BundleTariffCreate(BaseModel):
     is_active: bool = True
 
 
+class BundleTariffUpdate(BaseModel):
+    days: int | None = None
+    price_usdt: Decimal | None = None
+    is_active: bool | None = None
+
+
 @app.get("/api/admin/bundle-plans")
 async def admin_get_bundle_plans():
     return await rqadm.admin_get_bundle_plans()
@@ -2258,6 +2264,10 @@ async def admin_get_bundle_tariffs(bundle_plan_id: int):
 @app.post("/api/admin/bundle-tariffs")
 async def admin_add_bundle_tariff(data: BundleTariffCreate):
     return await rqadm.admin_add_bundle_tariff(data.dict())
+
+@app.patch("/api/admin/bundle-tariffs/{tariff_id}")
+async def admin_update_bundle_tariff(tariff_id: int, data: BundleTariffUpdate):
+    return await rqadm.admin_update_bundle_tariff(tariff_id, data.dict(exclude_unset=True))
 
 
 @app.delete("/api/admin/bundle-tariffs/{tariff_id}")

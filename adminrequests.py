@@ -699,6 +699,20 @@ async def admin_add_bundle_tariff(data: dict):
         return {"id": t.id}
 
 
+async def admin_update_bundle_tariff(tariff_id: int, data: dict):
+    async with async_session() as session:
+        t = await session.get(BundleTariff, tariff_id)
+        if not t:
+            raise ValueError("BundleTariff not found")
+
+        for field in ["days", "price_usdt", "is_active"]:
+            if field in data:
+                setattr(t, field, data[field])
+
+        await session.commit()
+        return {"status": "ok"}
+
+
 async def admin_delete_bundle_tariff(tariff_id: int):
     async with async_session() as session:
         t = await session.get(BundleTariff, tariff_id)
