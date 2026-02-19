@@ -1,14 +1,16 @@
 from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
-    PromoCode, PromoCodeUsage, BundlePlan, BundleServer, BundleTariff)
+    PromoCode, PromoCodeUsage, BundlePlan, BundleServer, BundleTariff, WalletOperation,
+    UserFreeDaysBalance, UserCheckin, UserTask, UserReward, UserRewardOp)
 from typing import List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from sqlalchemy import func
 from urllib.parse import quote
 
 from xui_api import XUIApi
+import tasksrequests as taskrq
 
 # --- ADMIN ------------------------------------------------------------
 
@@ -64,6 +66,270 @@ async def admin_delete_user(user_id: int):
         await session.delete(user)
         await session.commit()
         return {"status": "ok"}
+
+
+def _iso(value: datetime | None):
+    return value.isoformat() if value else None
+
+
+def _history_ts(dt: datetime | None) -> float:
+    if not dt:
+        return 0.0
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def _order_title(purpose: str):
+    mapping = {
+        "buy": "Покупка подписки",
+        "bundle_buy": "Покупка bundle-плана",
+        "extension": "Продление подписки",
+        "bundle_extension": "Продление bundle-подписки"
+    }
+    return mapping.get(purpose, f"Заказ: {purpose}")
+
+
+def _wallet_tx_title(tx_type: str):
+    mapping = {
+        "referral": "Реферальное начисление",
+        "promo": "Начисление по промокоду",
+        "deposit": "Пополнение баланса",
+        "withdrawal": "Списание с баланса",
+    }
+    return mapping.get(tx_type, f"Операция кошелька: {tx_type}")
+
+
+def _reward_op_title(source: str):
+    mapping = {
+        "task": "Награда за выполнение задания",
+        "referral_signup": "Награда за реферала",
+        "checkin": "Ежедневный check-in",
+        "checkin_exchange": "Обмен check-in на FREE дни",
+        "activate": "Активация FREE дней",
+        "legacy_rewards": "Импорт/начисление legacy-наград",
+        "promo": "Начисление FREE дней по промокоду",
+    }
+    return mapping.get(source, f"Операция FREE дней: {source}")
+
+
+async def admin_get_user_details(user_id: int, history_limit: int = 200):
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        wallet = await session.scalar(select(UserWallet).where(UserWallet.idUser == user_id))
+        free_days = await session.scalar(select(UserFreeDaysBalance).where(UserFreeDaysBalance.idUser == user_id))
+        checkin = await session.scalar(select(UserCheckin).where(UserCheckin.idUser == user_id))
+
+        completed_tasks = (await session.scalars(
+            select(UserTask).where(UserTask.idUser == user_id)
+        )).all()
+        completed_task_map = {t.task_key: t.completed_at for t in completed_tasks}
+
+        tasks_payload = []
+        for task in taskrq.TASKS:
+            completed_at = completed_task_map.get(task["key"])
+            tasks_payload.append({
+                "key": task["key"],
+                "title": task["title"],
+                "reward_days": task["reward_days"],
+                "completed": task["key"] in completed_task_map,
+                "completed_at": _iso(completed_at)
+            })
+
+        orders = (await session.scalars(
+            select(Order)
+            .where(Order.idUser == user_id)
+            .order_by(Order.created_at.desc())
+            .limit(history_limit)
+        )).all()
+
+        wallet_ops = (await session.scalars(
+            select(WalletOperation)
+            .where(WalletOperation.idUser == user_id)
+            .order_by(WalletOperation.created_at.desc())
+            .limit(history_limit)
+        )).all()
+
+        wallet_txs = []
+        if wallet:
+            wallet_txs = (await session.scalars(
+                select(WalletTransaction)
+                .where(WalletTransaction.wallet_id == wallet.id)
+                .order_by(WalletTransaction.created_at.desc())
+                .limit(history_limit)
+            )).all()
+
+        reward_ops = (await session.scalars(
+            select(UserRewardOp)
+            .where(UserRewardOp.idUser == user_id)
+            .order_by(UserRewardOp.created_at.desc())
+            .limit(history_limit)
+        )).all()
+
+        rewards = (await session.scalars(
+            select(UserReward)
+            .where(UserReward.idUser == user_id)
+            .order_by(UserReward.created_at.desc())
+            .limit(history_limit)
+        )).all()
+
+        promo_rows = (await session.execute(
+            select(PromoCodeUsage, PromoCode)
+            .join(PromoCode, PromoCode.id == PromoCodeUsage.promo_code_id)
+            .where(PromoCodeUsage.idUser == user_id)
+            .order_by(PromoCodeUsage.created_at.desc())
+            .limit(history_limit)
+        )).all()
+
+        task_by_key = {task["key"]: task for task in taskrq.TASKS}
+        history_items = []
+
+        for order in orders:
+            history_items.append((_history_ts(order.created_at), {
+                "id": order.id,
+                "type": "order",
+                "title": _order_title(order.purpose_order),
+                "description": f"Провайдер: {order.provider or 'unknown'}",
+                "status": order.status,
+                "amount_usdt": str(order.amount),
+                "days_delta": None,
+                "source": "orders",
+                "meta": None,
+                "created_at": _iso(order.created_at)
+            }))
+
+        for op in wallet_ops:
+            history_items.append((_history_ts(op.created_at), {
+                "id": op.id,
+                "type": "wallet_operation",
+                "title": _wallet_tx_title(op.type),
+                "description": op.meta,
+                "status": op.status,
+                "amount_usdt": str(op.amount_usdt),
+                "days_delta": None,
+                "source": "wallet_operations",
+                "meta": op.meta,
+                "created_at": _iso(op.created_at)
+            }))
+
+        for tx in wallet_txs:
+            history_items.append((_history_ts(tx.created_at), {
+                "id": tx.id,
+                "type": "wallet_transaction",
+                "title": _wallet_tx_title(tx.type),
+                "description": tx.description,
+                "status": "completed",
+                "amount_usdt": str(tx.amount),
+                "days_delta": None,
+                "source": "wallet_transactions",
+                "meta": tx.description,
+                "created_at": _iso(tx.created_at)
+            }))
+
+        for row in completed_tasks:
+            task_info = task_by_key.get(row.task_key, {})
+            history_items.append((_history_ts(row.completed_at), {
+                "id": row.id,
+                "type": "task_completed",
+                "title": f"Задание выполнено: {task_info.get('title', row.task_key)}",
+                "description": f"Ключ задания: {row.task_key}",
+                "status": "completed",
+                "amount_usdt": None,
+                "days_delta": task_info.get("reward_days"),
+                "source": "user_tasks",
+                "meta": row.task_key,
+                "created_at": _iso(row.completed_at)
+            }))
+
+        for rop in reward_ops:
+            history_items.append((_history_ts(rop.created_at), {
+                "id": rop.id,
+                "type": "reward_operation",
+                "title": _reward_op_title(rop.source),
+                "description": rop.meta,
+                "status": "completed",
+                "amount_usdt": None,
+                "days_delta": rop.days_delta,
+                "source": "user_reward_ops",
+                "meta": rop.meta,
+                "created_at": _iso(rop.created_at)
+            }))
+
+        for reward in rewards:
+            if not reward.is_activated or not reward.activated_at:
+                continue
+            history_items.append((_history_ts(reward.activated_at), {
+                "id": reward.id,
+                "type": "reward_activation",
+                "title": "Активация награды FREE дней",
+                "description": f"{reward.days} дн. на сервер #{reward.activated_server_id}",
+                "status": "completed",
+                "amount_usdt": None,
+                "days_delta": reward.days,
+                "source": "user_rewards",
+                "meta": None,
+                "created_at": _iso(reward.activated_at)
+            }))
+
+        for usage, promo in promo_rows:
+            history_items.append((_history_ts(usage.created_at), {
+                "id": usage.id,
+                "type": "promo_activation",
+                "title": "Активация промокода",
+                "description": f"{promo.code} ({promo.reward_name})",
+                "status": "completed",
+                "amount_usdt": str(promo.reward_value) if promo.reward_type == "balance" else None,
+                "days_delta": int(promo.reward_value) if promo.reward_type == "free_days" else None,
+                "source": "promo_code_usages",
+                "meta": promo.code,
+                "created_at": _iso(usage.created_at)
+            }))
+
+        history_items.sort(key=lambda item: item[0], reverse=True)
+        history_payload = [item for _, item in history_items[:history_limit]]
+
+        return {
+            "user": {
+                "idUser": user.idUser,
+                "tg_id": user.tg_id,
+                "tg_username": user.tg_username,
+                "userRole": user.userRole,
+                "referrer_id": user.referrer_id,
+                "created_at": _iso(user.created_at),
+            },
+            "wallet": {
+                "balance_usdt": str(wallet.balance_usdt) if wallet else "0",
+                "updated_at": _iso(wallet.updated_at) if wallet else None,
+            },
+            "free_days": {
+                "balance_days": free_days.balance_days if free_days else 0,
+                "updated_at": _iso(free_days.updated_at) if free_days else None,
+            },
+            "checkin": {
+                "checkin_count": checkin.checkin_count if checkin else 0,
+                "last_checkin_at": _iso(checkin.last_checkin_at) if checkin else None,
+            },
+            "tasks": tasks_payload,
+            "reward_operations": [{
+                "id": rop.id,
+                "source": rop.source,
+                "days_delta": rop.days_delta,
+                "meta": rop.meta,
+                "created_at": _iso(rop.created_at)
+            } for rop in reward_ops],
+            "reward_activations": [{
+                "id": reward.id,
+                "days": reward.days,
+                "activated_server_id": reward.activated_server_id,
+                "activated_at": _iso(reward.activated_at),
+                "created_at": _iso(reward.created_at),
+                "is_activated": reward.is_activated
+            } for reward in rewards],
+            "history": history_payload
+        }
         
         
 # =======================

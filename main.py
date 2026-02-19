@@ -2047,6 +2047,14 @@ async def admin_update_user(user_id: int, data: AdminUserUpdate):
 async def admin_delete_user(user_id: int):
     return await rqadm.admin_delete_user(user_id)
 
+@app.get("/api/admin/users/{user_id}/details")
+async def admin_get_user_details(user_id: int, history_limit: int = 200):
+    if history_limit < 10:
+        history_limit = 10
+    if history_limit > 1000:
+        history_limit = 1000
+    return await rqadm.admin_get_user_details(user_id, history_limit=history_limit)
+
 
 # ======================
 # ADMIN: WALLETS
@@ -2528,7 +2536,3 @@ async def admin_update_referral_earning(earning_id: int, data: ReferralEarningUp
 @app.delete("/api/admin/referral-earnings/{earning_id}")
 async def admin_delete_referral_earning(earning_id: int):
     return await rqadm.admin_delete_referral_earning(earning_id)
-
-
-
-
