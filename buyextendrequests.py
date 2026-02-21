@@ -109,6 +109,64 @@ async def pay_and_extend_vpn(subscription_id: int, tariff_id: int):
             "expires_at": sub.expires_at.isoformat(),"expires_at_human": rq.format_datetime_ru(sub.expires_at)}
 
 
+async def _generate_unique_access_token(session) -> str:
+    for _ in range(10):
+        token = uuid_lib.uuid4().hex
+        exists_single = await session.scalar(
+            select(VPNSubscription.id).where(VPNSubscription.access_token == token)
+        )
+        exists_bundle = await session.scalar(
+            select(BundleSubscription.id).where(BundleSubscription.access_token == token)
+        )
+        if not exists_single and not exists_bundle:
+            return token
+    raise ValueError("TOKEN_GENERATION_FAILED")
+
+
+async def rotate_vpn_access_token(session, subscription_id: int, user_id: int):
+    sub = await session.get(VPNSubscription, subscription_id)
+    if not sub:
+        raise ValueError("SUBSCRIPTION_NOT_FOUND")
+    if sub.idUser != user_id:
+        raise ValueError("FORBIDDEN")
+
+    new_token = await _generate_unique_access_token(session)
+    new_subscription_url = rq.build_single_subscription_url(new_token)
+    if not new_subscription_url:
+        raise ValueError("SUBSCRIPTION_URL_UNAVAILABLE")
+
+    sub.access_token = new_token
+    sub.subscription_url = new_subscription_url
+    await session.commit()
+
+    return {
+        "subscription_id": sub.id,
+        "subscription_url": sub.subscription_url
+    }
+
+
+async def rotate_bundle_access_token(session, bundle_subscription_id: int, user_id: int):
+    bundle_sub = await session.get(BundleSubscription, bundle_subscription_id)
+    if not bundle_sub:
+        raise ValueError("BUNDLE_SUBSCRIPTION_NOT_FOUND")
+    if bundle_sub.idUser != user_id:
+        raise ValueError("FORBIDDEN")
+
+    new_token = await _generate_unique_access_token(session)
+    new_subscription_url = rq.build_bundle_subscription_url(new_token)
+    if not new_subscription_url:
+        raise ValueError("SUBSCRIPTION_URL_UNAVAILABLE")
+
+    bundle_sub.access_token = new_token
+    bundle_sub.subscription_url = new_subscription_url
+    await session.commit()
+
+    return {
+        "bundle_subscription_id": bundle_sub.id,
+        "subscription_url": bundle_sub.subscription_url
+    }
+
+
 # УДАЛЕНИЕ КЛЮЧА
 async def remove_vpn_xui(subscription: VPNSubscription):
     async with async_session() as session:

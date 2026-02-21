@@ -262,6 +262,54 @@ async def my_bundle_vpns(tg_id: int):
     return await rq.get_my_bundle_vpns(tg_id)
 
 
+class RotateTokenRequest(BaseModel):
+    tg_id: int
+    subscription_id: int
+
+
+class RotateBundleTokenRequest(BaseModel):
+    tg_id: int
+    bundle_subscription_id: int
+
+
+@app.post("/api/vpn/rotate-token")
+async def rotate_vpn_token(data: RotateTokenRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+        try:
+            return await berq.rotate_vpn_access_token(session, data.subscription_id, user.idUser)
+        except ValueError as e:
+            msg = str(e)
+            if msg == "SUBSCRIPTION_NOT_FOUND":
+                raise HTTPException(404, "Subscription not found")
+            if msg == "FORBIDDEN":
+                raise HTTPException(403, "FORBIDDEN")
+            if msg == "SUBSCRIPTION_URL_UNAVAILABLE":
+                raise HTTPException(400, "SUBSCRIPTION_URL_UNAVAILABLE")
+            raise HTTPException(400, msg)
+
+
+@app.post("/api/vpn/bundle/rotate-token")
+async def rotate_bundle_token(data: RotateBundleTokenRequest):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == data.tg_id))
+        if not user:
+            raise HTTPException(404, "User not found")
+        try:
+            return await berq.rotate_bundle_access_token(session, data.bundle_subscription_id, user.idUser)
+        except ValueError as e:
+            msg = str(e)
+            if msg == "BUNDLE_SUBSCRIPTION_NOT_FOUND":
+                raise HTTPException(404, "Bundle subscription not found")
+            if msg == "FORBIDDEN":
+                raise HTTPException(403, "FORBIDDEN")
+            if msg == "SUBSCRIPTION_URL_UNAVAILABLE":
+                raise HTTPException(400, "SUBSCRIPTION_URL_UNAVAILABLE")
+            raise HTTPException(400, msg)
+
+
 @app.get("/api/vpn/sub/{token}")
 async def single_subscription(token: str):
     async with async_session() as session:
