@@ -3,7 +3,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
-from models import async_session, User, Order, UserTask, UserReward, VPNSubscription, ServersVPN, BundleServer
+from models import async_session, User, Order, UserTask, UserReward, VPNSubscription, ServersVPN
 from xui_api import XUIApi
 import uuid as uuid_lib
 import requestsfile as rq
@@ -134,11 +134,6 @@ async def _apply_free_days_to_subscription(session, user_id: int, server_id: int
     server = await session.get(ServersVPN, server_id)
     if not server:
         raise HTTPException(404, "Server not found")
-    bundle_link = await session.scalar(
-        select(BundleServer.id).where(BundleServer.server_id == server_id)
-    )
-    if bundle_link:
-        raise HTTPException(400, "FREE_DAYS_BUNDLE_NOT_ALLOWED")
 
     if subscription_id:
         sub = await session.scalar(select(VPNSubscription)
