@@ -3,7 +3,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
-from models import async_session, User, Order, UserTask, UserReward, VPNSubscription, ServersVPN
+from models import async_session, User, Order, UserTask, UserReward, VPNSubscription, ServersVPN, BundleServer
 from xui_api import XUIApi
 import uuid as uuid_lib
 import requestsfile as rq
@@ -134,6 +134,11 @@ async def _apply_free_days_to_subscription(session, user_id: int, server_id: int
     server = await session.get(ServersVPN, server_id)
     if not server:
         raise HTTPException(404, "Server not found")
+    bundle_link = await session.scalar(
+        select(BundleServer.id).where(BundleServer.server_id == server_id)
+    )
+    if bundle_link:
+        raise HTTPException(400, "FREE_DAYS_BUNDLE_NOT_ALLOWED")
 
     if subscription_id:
         sub = await session.scalar(select(VPNSubscription)
@@ -204,11 +209,13 @@ async def _apply_free_days_to_subscription(session, user_id: int, server_id: int
     sub_id = client.get("sub_id") or sub_id
 
     expires_at = now + timedelta(days=days)
-    subscription_url = rq.build_subscription_url(server, sub_id)
+    access_token = uuid_lib.uuid4().hex
+    subscription_url = rq.build_single_subscription_url(access_token)
 
     sub = VPNSubscription(idUser=user_id, idServerVPN=server_id, provider="xui",
         provider_client_email=client_email, provider_client_uuid=client_uuid, subscription_id=sub_id,
-        subscription_url=subscription_url, created_at=now, expires_at=expires_at, is_active=True, status="active")
+        access_token=access_token, subscription_url=subscription_url,
+        created_at=now, expires_at=expires_at, is_active=True, status="active")
 
     session.add(sub)
     await session.flush()
@@ -251,9 +258,11 @@ async def get_free_days_data(user_id: int):
         await session.refresh(checkin)
 
         exchange_units = checkin.checkin_count // 10
+        checkin_limit_reached = checkin.checkin_count >= 30
         return {
             "free_days": balance.balance_days,
             "checkin_count": checkin.checkin_count,
+            "checkin_limit_reached": checkin_limit_reached,
             "exchange_units": exchange_units,
             "exchange_days": exchange_units,
             "last_checkin_at": checkin.last_checkin_at.isoformat() if checkin.last_checkin_at else None,
@@ -266,6 +275,8 @@ async def perform_checkin(user_id: int):
         now = datetime.now(timezone.utc)
         if checkin.last_checkin_at and checkin.last_checkin_at.date() == now.date():
             raise HTTPException(400, "Already checked in today")
+        if checkin.checkin_count >= 30:
+            raise HTTPException(400, "CHECKIN_LIMIT_REACHED")
 
         checkin.checkin_count += 1
         checkin.last_checkin_at = now

@@ -4,7 +4,7 @@ from sqlalchemy import select, update, delete
 from models import (async_session, User, UserWallet, WalletOperation, WalletTransaction, VPNSubscription, TypesVPN,
     CountriesVPN, ServersVPN, Tariff, ExchangeRate, Order, Payment, ReferralConfig, ReferralEarning,
     UserFreeDaysBalance, UserRewardOp, UserCheckin, PromoCode, PromoCodeUsage, BundlePlan, BundleSubscription,
-    BundleTariff)
+    BundleTariff, BundleServer)
 from typing import List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -307,6 +307,7 @@ async def get_servers_full():
         rate_val = rate.rate if rate else Decimal("1")
 
         result = []
+        bundle_server_ids = set(await session.scalars(select(BundleServer.server_id).distinct()))
         for s, type_vpn, country in servers:
             tariffs_rows = tariffs_map.get(s.idServerVPN, [])
             tariffs_list = []
@@ -315,7 +316,8 @@ async def get_servers_full():
                     "price_usdt": str(t.price_tarif),"price_stars": int(t.price_tarif / rate_val)})
 
             result.append({"idServerVPN": s.idServerVPN,"nameVPN": s.nameVPN,"type_vpn": type_vpn.nameType if type_vpn else "",
-                "type_description": type_vpn.descriptionType if type_vpn else "","country": country.nameCountry if country else "","tariffs": tariffs_list})
+                "type_description": type_vpn.descriptionType if type_vpn else "","country": country.nameCountry if country else "",
+                "tariffs": tariffs_list, "is_bundle": s.idServerVPN in bundle_server_ids})
         return result
 
 
