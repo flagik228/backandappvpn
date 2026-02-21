@@ -1943,6 +1943,11 @@ async def get_referrals(
     return await rq.get_referrals_list(tg_id)
 
 
+@app.get("/api/referrals/stats/{tg_id}")
+async def referrals_stats(tg_id: int):
+    return await rq.get_referral_stats(tg_id)
+
+
 # ======================
 # TASKS x Rewards
 @app.get("/api/tasks/{tg_id}")

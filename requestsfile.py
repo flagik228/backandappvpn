@@ -607,6 +607,36 @@ async def get_referrals_list(tg_id: int):
         ]
 
 
+async def get_referral_stats(tg_id: int):
+    async with async_session() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            return {
+                "total_earnings_usdt": "0.00",
+                "referral_free_days": 0,
+                "referrals_count": 0
+            }
+
+        total_earnings = await session.scalar(
+            select(func.coalesce(func.sum(ReferralEarning.amount_usdt), Decimal("0")))
+            .where(ReferralEarning.referrer_id == user.idUser)
+        )
+        free_days = await session.scalar(
+            select(func.coalesce(func.sum(UserRewardOp.days_delta), 0))
+            .where(UserRewardOp.idUser == user.idUser, UserRewardOp.source == "referral_signup")
+        )
+        referrals_count = await session.scalar(
+            select(func.count()).select_from(User).where(User.referrer_id == user.idUser)
+        )
+
+        total = Decimal(total_earnings or 0).quantize(Decimal("0.01"))
+        return {
+            "total_earnings_usdt": str(total),
+            "referral_free_days": int(free_days or 0),
+            "referrals_count": int(referrals_count or 0)
+        }
+
+
 # REFERRAL PAYOUT
 async def process_referral_reward(session, order: Order):
     user = await session.get(User, order.idUser)
